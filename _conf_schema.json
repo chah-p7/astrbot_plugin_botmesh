@@ -1,0 +1,484 @@
+{
+  "self_bot_id": {
+    "description": "默认/备用本机 Bot ID",
+    "type": "string",
+    "default": "",
+    "hint": "运行时优先按消息事件的机器人账号自动匹配 bots；无法识别时才使用这里的默认 Bot。推荐在统一管理页面选择。"
+  },
+  "shared_secret": {
+    "description": "BotMesh 展示/兼容协议密钥",
+    "type": "string",
+    "default": "",
+    "obvious_hint": true,
+    "hint": "至少 32 UTF-8 字节。Agent 请求在进程内直连；该密钥用于签名群聊 DSP 防回流展示、旁听插话和旧版兼容消息。不要复用登录密码。"
+  },
+  "fallback_shared_secret": {
+    "description": "密钥轮换期间接受的备用共享密钥",
+    "type": "string",
+    "default": "",
+    "obvious_hint": true,
+    "hint": "仅在无中断轮换期间设置；发送始终使用 shared_secret，接收同时接受两者。确认当前实例运行正常后清除。"
+  },
+  "accept_legacy_signatures": {
+    "description": "临时接受旧版 64-bit 签名",
+    "type": "bool",
+    "default": false,
+    "hint": "仅用于从 0.4.1 及更早版本迁移；所有实例升级后应关闭。"
+  },
+  "require_native_mention": {
+    "description": "兼容设置：要求原生 @",
+    "type": "bool",
+    "default": false,
+    "hint": "0.8.2 起所有 BotMesh 出站通道都不再添加 @ 消息头；该旧设置不再参与运行时判断。"
+  },
+  "block_unframed_bot_messages": {
+    "description": "阻止已登记 Bot 的普通消息触发 LLM",
+    "type": "bool",
+    "default": true,
+    "hint": "用于避免多个 Bot 因平台回流或普通消息自动回复彼此；Agent 问答不受此项影响。"
+  },
+  "default_allow_ask": {
+    "description": "没有关系边时默认允许询问",
+    "type": "bool",
+    "default": false
+  },
+  "max_depth": {
+    "description": "最大互动深度",
+    "type": "int",
+    "default": 2
+  },
+  "ttl_seconds": {
+    "description": "展示/兼容协议有效期（秒）",
+    "type": "int",
+    "default": 120
+  },
+  "cooldown_seconds": {
+    "description": "同一对 Bot 的询问冷却时间（秒）",
+    "type": "int",
+    "default": 10
+  },
+  "max_question_chars": {
+    "description": "问题最大字符数",
+    "type": "int",
+    "default": 2000
+  },
+  "max_answer_chars": {
+    "description": "回答最大字符数",
+    "type": "int",
+    "default": 3000
+  },
+  "max_context_summary_chars": {
+    "description": "允许共享的背景摘要最大字符数",
+    "type": "int",
+    "default": 1000,
+    "hint": "只有显式关系边开启 share_context 时才会发送；没有关系边时始终丢弃摘要。"
+  },
+  "answer_max_tokens": {
+    "description": "回答模型最大输出 Token",
+    "type": "int",
+    "default": 1000
+  },
+  "agent_max_steps": {
+    "description": "Bot Agent 单次通信最大步骤数",
+    "type": "int",
+    "default": 4,
+    "hint": "目标 Bot 作为独立 Agent 运行；每一步可决定直接回答或通过 BotMesh Agent 工具联系另一个 Bot。"
+  },
+  "autofill_provider_id": {
+    "description": "统一管理页 AI 自动填写使用的对话模型",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider",
+    "hint": "可直接在统一管理页的 AI 自动填写卡片中选择。"
+  },
+  "autofill_max_tokens": {
+    "description": "AI 自动填写最大输出 Token",
+    "type": "int",
+    "default": 2400
+  },
+  "autofill_prompt_max_chars": {
+    "description": "AI 自动填写可读取的 BotMesh 人格总字符上限",
+    "type": "int",
+    "default": 30000
+  },
+  "auto_extract_relations": {
+    "description": "自动从各 Bot 的全局 BotMesh 人格抽取关系",
+    "type": "bool",
+    "default": true,
+    "hint": "首次处理消息时同步；之后仅在 system prompt 哈希变化时重新抽取。也可由管理员执行 /botmesh sync 强制更新。"
+  },
+  "relation_extraction_max_tokens": {
+    "description": "单个 BotMesh 人格关系抽取最大输出 Token",
+    "type": "int",
+    "default": 1400
+  },
+  "relation_prompt_max_chars": {
+    "description": "参与关系抽取的 system prompt 最大字符数",
+    "type": "int",
+    "default": 20000
+  },
+  "relation_confidence_threshold": {
+    "description": "写入关系表的最低置信度（0-1）",
+    "type": "float",
+    "default": 0.55
+  },
+  "inferred_allow_ask": {
+    "description": "允许仅凭 Prompt 推断出的关系发起询问",
+    "type": "bool",
+    "default": false,
+    "hint": "安全起见默认关闭。开启是管理员对所有推断关系的显式授权；share_context 和 allow_flirt 仍不会由模型自动开启。"
+  },
+  "auto_sync_interval_seconds": {
+    "description": "自动检查 BotMesh 人格变化的间隔（秒）",
+    "type": "int",
+    "default": 300,
+    "hint": "只在哈希变化时调用模型重新抽取，不再局限于进程启动后的第一次消息。"
+  },
+  "auto_evolve_relations": {
+    "description": "根据真实 Bot 互动小幅更新动态关系",
+    "type": "bool",
+    "default": true,
+    "hint": "只改变当前模式和关系数值，不改变基础关系类型及任何权限。"
+  },
+  "relation_evolution_max_tokens": {
+    "description": "动态关系评估最大输出 Token",
+    "type": "int",
+    "default": 400
+  },
+  "relation_evolution_confidence_threshold": {
+    "description": "接受单次关系变化的最低置信度",
+    "type": "float",
+    "default": 0.65
+  },
+  "relation_evolution_max_step": {
+    "description": "单次关系数值最大变化量",
+    "type": "float",
+    "default": 0.05,
+    "hint": "建议保持在 0.02-0.08，避免一句话让长期关系突变。"
+  },
+  "relationship_context_max_chars": {
+    "description": "关系评估/旁听判断读取的上下文最大字符数",
+    "type": "int",
+    "default": 4000,
+    "hint": "总字符预算由 chat_history_context、AstrBot 会话历史和 BotMesh 近期消息共同使用；严格按 Bot/平台会话/群隔离。"
+  },
+  "chat_history_context_enabled": {
+    "description": "兼容读取 chat_history_context 持久化群历史",
+    "type": "bool",
+    "default": true,
+    "hint": "只读访问 data/plugin_data/astrbot_plugin_chat_history_context/history.sqlite3；插件或数据库不存在时自动回退，不会创建数据库。"
+  },
+  "chat_history_context_hours": {
+    "description": "chat_history_context 回溯小时数",
+    "type": "float",
+    "default": 2,
+    "hint": "按调用 Bot 自己的完整 UMO 查询，默认与 chat_history_context 的每轮自动上下文窗口一致。"
+  },
+  "chat_history_context_max_messages": {
+    "description": "chat_history_context 最多读取消息数",
+    "type": "int",
+    "default": 100,
+    "hint": "优先读取较新的记录，最终仍受关系上下文最大字符数限制。"
+  },
+  "dynamic_mode_ttl_seconds": {
+    "description": "短期互动模式有效时间（秒）",
+    "type": "int",
+    "default": 1800,
+    "hint": "过期后回到常态；累计的信任、熟悉、好感等长期变化仍保留。"
+  },
+  "observer_enabled": {
+    "description": "启用群聊旁听插话模式",
+    "type": "bool",
+    "default": true,
+    "hint": "只旁听用户明确 @另一个已登记 Bot 的消息；关系边还必须显式开启 allow_interject。"
+  },
+  "observer_min_score": {
+    "description": "允许插话的最低相关性分数",
+    "type": "float",
+    "default": 0.78
+  },
+  "observer_cooldown_seconds": {
+    "description": "同一会话对同一 Bot 插话冷却秒数",
+    "type": "int",
+    "default": 90
+  },
+  "observer_max_per_hour": {
+    "description": "本 Bot 每小时最多旁听插话次数",
+    "type": "int",
+    "default": 4
+  },
+  "observer_max_chars": {
+    "description": "单次旁听插话最大字符数",
+    "type": "int",
+    "default": 500
+  },
+  "observer_decision_max_tokens": {
+    "description": "旁听判断模型最大输出 Token",
+    "type": "int",
+    "default": 500
+  },
+  "audit_retention_days": {
+    "description": "互动、旁听和动态关系审计记录保留天数",
+    "type": "int",
+    "default": 90,
+    "hint": "当前关系状态和人格抽取状态不会被清理。"
+  },
+  "bots": {
+    "description": "Bot 节点",
+    "type": "template_list",
+    "templates": {
+      "bot": {
+        "name": "Bot",
+        "display_item": "display_name",
+        "items": {
+          "bot_id": {
+            "description": "Bot ID",
+            "type": "string",
+            "default": ""
+          },
+          "display_name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": ""
+          },
+          "account_id": {
+            "description": "平台账号 ID / QQ 号",
+            "type": "string",
+            "default": ""
+          },
+          "platform_id": {
+            "description": "AstrBot 平台配置 ID",
+            "type": "string",
+            "default": "",
+            "hint": "由统一管理页面自动填写，用于平台重连或暂时无法读取账号时保持导入映射一致。"
+          },
+          "description": {
+            "description": "职责描述",
+            "type": "text",
+            "default": ""
+          },
+          "capabilities": {
+            "description": "能力标签",
+            "type": "list",
+            "default": []
+          },
+          "aliases": {
+            "description": "角色别名/昵称",
+            "type": "list",
+            "default": [],
+            "hint": "用于把 system prompt 中的名字准确映射到 bot_id；别名在整个关系网中必须唯一。"
+          }
+        }
+      }
+    }
+  },
+  "group_scopes": {
+    "description": "逻辑群聊列表",
+    "type": "template_list",
+    "hint": "逻辑群是人格、关系与不同 Bot 平台群 ID 映射的共同作用域。推荐在统一管理页新建、重命名或删除。",
+    "templates": {
+      "group_scope": {
+        "name": "逻辑群",
+        "display_item": "group_id",
+        "items": {
+          "group_id": {
+            "description": "逻辑群 ID / 名称",
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    }
+  },
+  "group_bindings": {
+    "description": "逻辑群聊与各 Bot 平台群 ID 的映射",
+    "type": "template_list",
+    "hint": "QQ 官方 API 的 group_openid 可能因 Bot 而异。请在统一管理页先选择逻辑群，再按 Bot 填写各自收到的平台群 ID。",
+    "templates": {
+      "group_binding": {
+        "name": "群聊映射",
+        "display_item": "group_id",
+        "items": {
+          "group_id": {
+            "description": "逻辑群 ID / 名称",
+            "type": "string",
+            "default": ""
+          },
+          "bot_id": {
+            "description": "Bot ID",
+            "type": "string",
+            "default": ""
+          },
+          "platform_group_id": {
+            "description": "该 Bot 收到的平台群 ID / group_openid",
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    }
+  },
+  "persona_profiles": {
+    "description": "BotMesh 管理的人格（支持分群覆盖）",
+    "type": "template_list",
+    "hint": "推荐在统一管理页的人格标签中编辑。群 ID 留空表示全局默认；非空值是 group_bindings 中统一后的逻辑群 ID。",
+    "templates": {
+      "persona_profile": {
+        "name": "人格",
+        "display_item": "bot_id",
+        "items": {
+          "bot_id": {
+            "description": "Bot ID",
+            "type": "string",
+            "default": ""
+          },
+          "group_id": {
+            "description": "群 ID（留空为全局）",
+            "type": "string",
+            "default": ""
+          },
+          "system_prompt": {
+            "description": "人格 System Prompt",
+            "type": "text",
+            "default": ""
+          }
+        }
+      }
+    }
+  },
+  "users": {
+    "description": "普通用户节点",
+    "type": "template_list",
+    "hint": "可选。用于让 Bot 识别特定普通用户及其关系；普通用户不会被当作可询问的 Bot，也不会触发 Bot 防循环拦截。推荐在统一管理页面中添加。",
+    "templates": {
+      "user": {
+        "name": "普通用户",
+        "display_item": "display_name",
+        "items": {
+          "user_id": {
+            "description": "关系网用户 ID",
+            "type": "string",
+            "default": ""
+          },
+          "display_name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": ""
+          },
+          "account_id": {
+            "description": "平台用户账号 ID / QQ 号",
+            "type": "string",
+            "default": ""
+          },
+          "description": {
+            "description": "身份或关系备注",
+            "type": "text",
+            "default": ""
+          },
+          "aliases": {
+            "description": "别名/昵称",
+            "type": "list",
+            "default": []
+          }
+        }
+      }
+    }
+  },
+  "relations": {
+    "description": "有向关系边",
+    "type": "template_list",
+    "hint": "推荐从插件详情页打开“关系编辑器”，可直接用下拉框选择 bots 中的现有 Bot。这里保留为兼容的文本配置入口。",
+    "templates": {
+      "relation": {
+        "name": "关系",
+        "display_item": "source_bot_id",
+        "items": {
+          "source_bot_id": {
+            "description": "发起方 Bot ID",
+            "type": "string",
+            "default": ""
+          },
+          "target_bot_id": {
+            "description": "目标 Bot ID",
+            "type": "string",
+            "default": ""
+          },
+          "group_id": {
+            "description": "群聊 ID（留空表示全局默认）",
+            "type": "string",
+            "default": "",
+            "hint": "当前群存在同方向关系时优先使用群聊关系，否则回退到全局关系。"
+          },
+          "relation_type": {
+            "description": "关系类型",
+            "type": "string",
+            "default": "acquaintance"
+          },
+          "allow_ask": {
+            "description": "允许发起询问",
+            "type": "bool",
+            "default": true
+          },
+          "trust": {
+            "description": "信任度（0-1）",
+            "type": "float",
+            "default": 0.5
+          },
+          "tone": {
+            "description": "面对对方时的语气",
+            "type": "string",
+            "default": ""
+          },
+          "share_context": {
+            "description": "允许发送背景摘要",
+            "type": "bool",
+            "default": false
+          },
+          "address_as": {
+            "description": "发起方对目标的称呼",
+            "type": "string",
+            "default": ""
+          },
+          "familiarity": {
+            "description": "熟悉度（0-1）",
+            "type": "float",
+            "default": 0.0
+          },
+          "affinity": {
+            "description": "好感度（-1 到 1）",
+            "type": "float",
+            "default": 0.0
+          },
+          "romantic_interest": {
+            "description": "浪漫兴趣（0-1）",
+            "type": "float",
+            "default": 0.0
+          },
+          "allow_flirt": {
+            "description": "该方向允许调情倾向",
+            "type": "bool",
+            "default": false,
+            "hint": "只有 A -> B 与 B -> A 两行都开启时才视为双向允许；这仍只是管理员策略上限。"
+          },
+          "allow_interject": {
+            "description": "允许发起方旁听并插入目标 Bot 的对话",
+            "type": "bool",
+            "default": false,
+            "hint": "例如在 B -> A 行开启后，用户明确 @A 聊天时 B 才有资格竞争一次插话。"
+          },
+          "allow_evolve": {
+            "description": "允许该方向的关系状态随互动变化",
+            "type": "bool",
+            "default": true
+          },
+          "interject_priority": {
+            "description": "多旁听 Bot 候选权重",
+            "type": "float",
+            "default": 1.0,
+            "hint": "多个 Bot 都有插话权限时，使用确定性加权选择，每条用户消息最多一个候选。"
+          }
+        }
+      }
+    }
+  }
+}

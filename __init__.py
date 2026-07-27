@@ -1,0 +1,1 @@
+"""BotMesh AstrBot plugin package."""

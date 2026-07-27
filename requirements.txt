@@ -1,0 +1,1 @@
+# BotMesh MVP only uses Python's standard library and AstrBot's public SDK.

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BotMesh 统一管理</title>
+    <link rel="stylesheet" href="./style.css?v=0.8.2" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">BOTMESH · SOCIAL WORKSPACE</p>
+          <h1>BotMesh 统一管理</h1>
+          <p class="subtitle">
+            自动读取 AstrBot 平台账号，在一个页面维护 Bot、普通用户、有向关系和全部互动设置。
+          </p>
+        </div>
+        <div class="hero-stat" aria-live="polite">
+          <span id="nodeCount">–</span>
+          <small>个参与者</small>
+        </div>
+      </header>
+
+      <section class="toolbar" aria-label="统一管理工具栏">
+        <div class="toolbar-copy">
+          <strong id="workspaceSummary">正在读取…</strong>
+          <span id="selfBot">本机 Bot：–</span>
+        </div>
+        <div class="toolbar-actions">
+          <button id="reloadButton" class="button button-quiet" type="button">刷新平台</button>
+          <button id="saveButton" class="button button-primary" type="button">保存全部</button>
+        </div>
+      </section>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+
+      <nav class="tabs" aria-label="管理区域">
+        <button class="tab is-active" data-tab="discover" type="button">自动发现</button>
+        <button class="tab" data-tab="nodes" type="button">参与者</button>
+        <button class="tab" data-tab="personas" type="button">群聊配置</button>
+        <button class="tab" data-tab="relations" type="button">关系</button>
+        <button class="tab" data-tab="settings" type="button">全部设置</button>
+      </nav>
+
+      <section id="discoverPanel" class="panel">
+        <div class="section-head">
+          <div>
+            <h2>AstrBot 已有平台 Bot</h2>
+            <p>平台状态在后台读取，不阻塞编辑；首次无 Bot 配置时会自动加入编辑区。</p>
+          </div>
+          <button id="importAllButton" class="button button-secondary" type="button">导入全部可识别 Bot</button>
+        </div>
+        <div id="discoveryList" class="discovery-grid"></div>
+      </section>
+
+      <section id="nodesPanel" class="panel" hidden>
+        <div class="section-head">
+          <div>
+            <h2>参与者节点</h2>
+            <p>Bot 可以互相真实询问；普通用户只用于关系识别与对话语气。</p>
+          </div>
+          <div class="inline-actions">
+            <button id="addBotButton" class="button button-secondary" type="button">＋ Bot</button>
+            <button id="addUserButton" class="button button-quiet" type="button">＋ 普通用户</button>
+          </div>
+        </div>
+        <div class="autofill-card">
+          <div>
+            <strong>AI 自动填写草稿</strong>
+            <p>使用你在这里选择的模型，结合 BotMesh 人格补全节点和完整关系字段；不会自动保存，也不会授予询问、上下文、调情或插话权限。</p>
+          </div>
+          <label class="autofill-group">
+            <span>自动填写模型</span>
+            <select id="autofillProviderId" class="control"></select>
+          </label>
+          <label class="autofill-group">
+            <span>目标逻辑群</span>
+            <input id="autofillGroupId" class="control" maxlength="128" list="knownGroupIds" placeholder="留空＝全局默认" />
+          </label>
+          <datalist id="knownGroupIds"></datalist>
+          <textarea id="autofillInstruction" class="control" maxlength="1000" placeholder="可选：补充你的要求，例如“优先按角色设定填写称呼与能力，不确定的关系不要添加”"></textarea>
+          <button id="autofillButton" class="button button-secondary" type="button">用对话模型自动填写</button>
+        </div>
+        <div id="nodeList" class="node-list"></div>
+      </section>
+
+      <section id="personasPanel" class="panel" hidden>
+        <div class="section-head">
+          <div>
+            <h2>群聊 Bot 人格</h2>
+            <p>先选择群聊范围，再按机器人逐行配置。群内未单独配置时会继承全局人格。</p>
+          </div>
+          <div class="scope-picker">
+            <label class="scope-current">
+              <span>选择已有群</span>
+              <select id="personaGroupScope" class="control"></select>
+            </label>
+            <label class="scope-manual">
+              <span>新建逻辑群</span>
+              <span class="scope-manual-row">
+                <input id="personaGroupInput" class="control" maxlength="128" list="knownGroupIds" placeholder="例如：主群" />
+                <button id="createPersonaGroupButton" class="button button-secondary" type="button">新建</button>
+              </span>
+            </label>
+            <button id="renamePersonaGroupButton" class="button button-quiet scope-add-button" type="button">重命名</button>
+            <button id="deletePersonaGroupButton" class="button delete-button scope-add-button" type="button">删除群</button>
+          </div>
+        </div>
+        <div id="personaScopeNote" class="scope-note"></div>
+        <div id="personaAdaptCard" class="persona-adapt-card" hidden>
+          <div>
+            <strong>AI 从全部全局人格编排群专属人格</strong>
+            <p>模型会查看所有已有全局人格，可按你的要求整合、修改或交换其中的设定，并尽量沿用原句；也可修改已有关系在该群中的称呼。结果只写入草稿。</p>
+          </div>
+          <label class="autofill-group">
+            <span>改写模型</span>
+            <select id="personaAdaptProviderId" class="control"></select>
+          </label>
+          <textarea id="personaAdaptInstruction" class="control" maxlength="2000" placeholder="例如：交换小A和小B的职责，整合两者的背景设定；其余内容尽量保留原句；对主人称呼为老师"></textarea>
+          <button id="personaAdaptAllButton" class="button button-secondary" type="button">生成本群全部人格</button>
+        </div>
+        <div id="personaList"></div>
+      </section>
+
+      <section id="relationsPanel" class="panel" hidden>
+        <div class="section-head">
+          <div>
+            <h2>有向关系</h2>
+            <p>先选择群聊范围；A → B 与 B → A 是两条独立关系，群专属关系会覆盖全局默认。</p>
+          </div>
+          <div class="scope-picker">
+            <label class="scope-current">
+              <span>选择已有群</span>
+              <select id="relationGroupScope" class="control"></select>
+            </label>
+            <label class="scope-manual">
+              <span>新建逻辑群</span>
+              <span class="scope-manual-row">
+                <input id="relationGroupInput" class="control" maxlength="128" list="knownGroupIds" placeholder="例如：主群" />
+                <button id="createRelationGroupButton" class="button button-secondary" type="button">新建</button>
+              </span>
+            </label>
+            <button id="renameRelationGroupButton" class="button button-quiet scope-add-button" type="button">重命名</button>
+            <button id="deleteRelationGroupButton" class="button delete-button scope-add-button" type="button">删除群</button>
+            <button id="addRelationButton" class="button button-secondary scope-add-button" type="button">＋ 当前群关系</button>
+          </div>
+        </div>
+        <div id="relationScopeNote" class="scope-note"></div>
+        <div id="relationList" class="relation-list"></div>
+      </section>
+
+      <section id="settingsPanel" class="panel" hidden>
+        <div class="section-head">
+          <div>
+            <h2>全部插件设置</h2>
+            <p>身份、安全、通信、Prompt 抽取、动态关系和旁听设置都在这里。</p>
+          </div>
+        </div>
+        <div id="settingsList" class="settings-groups"></div>
+      </section>
+
+      <footer class="footnote">
+        “保存全部”会原子保存节点、关系和设置，并立即刷新运行中的 BotMesh。共享密钥留空表示保持原值。
+      </footer>
+    </main>
+
+    <script type="module" src="./app.js?v=0.8.2"></script>
+  </body>
+</html>
