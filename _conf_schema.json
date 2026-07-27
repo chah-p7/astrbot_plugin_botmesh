@@ -160,13 +160,13 @@
     "description": "关系评估/旁听判断读取的上下文最大字符数",
     "type": "int",
     "default": 4000,
-    "hint": "总字符预算由 chat_history_context、AstrBot 会话历史和 BotMesh 近期消息共同使用；严格按 Bot/平台会话/群隔离。"
+    "hint": "旁听、关系演化、主动话题和直连 Agent 的历史字符预算；由 chat_history_context、AstrBot 会话历史和 BotMesh 近期消息共同使用。"
   },
   "chat_history_context_enabled": {
     "description": "兼容读取 chat_history_context 持久化群历史",
     "type": "bool",
     "default": true,
-    "hint": "只读访问 data/plugin_data/astrbot_plugin_chat_history_context/history.sqlite3；插件或数据库不存在时自动回退，不会创建数据库。"
+    "hint": "只读访问 data/plugin_data/astrbot_plugin_chat_history_context/history.sqlite3，并用于旁听、关系演化、主动话题和直连 Agent；插件或数据库不存在时自动回退。"
   },
   "chat_history_context_hours": {
     "description": "chat_history_context 回溯小时数",

@@ -2194,7 +2194,12 @@ class BotMeshPlugin(Star):
         conversation_manager, conversation_id, contexts = (
             await self._load_agent_conversation(event)
         )
+        history_context = await self._relationship_history_context(
+            event,
+            include_persisted_conversation=False,
+        )
         agent_prompt = (
+            f"{history_context}\n\n"
             f"Bot {source.display_name}（{source.bot_id}）通过 BotMesh Agent 通道询问你：\n"
             f"{question}\n\n"
             "请以你自己的身份处理并给出最终回答。不要输出 @ 或协议标记；"
@@ -2354,6 +2359,8 @@ class BotMeshPlugin(Star):
     async def _relationship_history_context(
         self,
         event: AstrMessageEvent,
+        *,
+        include_persisted_conversation: bool = True,
     ) -> str:
         """Build bounded, scope-local history for observer and relation models."""
         chat_history_entries = await self._load_chat_history_context_history(event)
@@ -2363,7 +2370,11 @@ class BotMeshPlugin(Star):
         }
         chat_contents = {entry.get("content", "") for entry in chat_history_entries}
         persisted_entries: list[dict[str, str]] = []
-        persisted = await self._load_existing_conversation_history(event)
+        persisted = (
+            await self._load_existing_conversation_history(event)
+            if include_persisted_conversation
+            else []
+        )
         for item in persisted:
             content = self._history_content_text(item.get("content"))
             if not content or content in chat_contents:
@@ -2467,6 +2478,87 @@ class BotMeshPlugin(Star):
             .replace("<", "\\u003c")
             .replace(">", "\\u003e")
         )
+
+    def chat_history_scope(
+        self,
+        *,
+        umo: str,
+        event: AstrMessageEvent | None = None,
+    ) -> dict[str, Any]:
+        """Expose one stable logical-group selector and all bound raw aliases."""
+        if self._configuration_error:
+            return {}
+        if event is not None:
+            bot = self.graph.get_bot(self._self_bot_id_for_event(event))
+            raw_group_id = self._raw_group_id_for_event(event)
+        else:
+            parts = str(umo or "").split(":", 2)
+            platform_id = parts[0].strip() if parts else ""
+            raw_group_id = parts[2].strip() if len(parts) == 3 else ""
+            bot = self.graph.get_by_platform(platform_id)
+        if bot is None or not raw_group_id:
+            return {}
+
+        current_binding = next(
+            (
+                binding
+                for binding in self.group_bindings
+                if str(binding.get("bot_id", "") or "") == bot.bot_id
+                and str(binding.get("platform_group_id", "") or "")
+                == raw_group_id
+            ),
+            None,
+        )
+        if current_binding is None:
+            return {}
+        logical_group_id = str(current_binding.get("group_id", "") or "").strip()
+        if not logical_group_id:
+            return {}
+
+        selectors: list[str] = [f"botmesh:{logical_group_id}"]
+        for binding in self.group_bindings:
+            if str(binding.get("group_id", "") or "").strip() != logical_group_id:
+                continue
+            bound_bot = self.graph.get_bot(str(binding.get("bot_id", "") or ""))
+            bound_group_id = str(
+                binding.get("platform_group_id", "") or ""
+            ).strip()
+            if not bound_group_id:
+                continue
+            selectors.append(bound_group_id)
+            if bound_bot is not None and bound_bot.platform_id:
+                selectors.extend(
+                    (
+                        f"{bound_bot.platform_id}:{bound_group_id}",
+                        f"{bound_bot.platform_id}/{bound_group_id}",
+                        f"{bound_bot.platform_id}:GroupMessage:{bound_group_id}",
+                    )
+                )
+        return {
+            "selector": f"botmesh:{logical_group_id}",
+            "logical_group_id": logical_group_id,
+            "selectors": list(dict.fromkeys(selectors)),
+        }
+
+    def normalize_chat_history_message(
+        self,
+        *,
+        umo: str,
+        content: str,
+        event: AstrMessageEvent | None = None,
+    ) -> str:
+        """Remove only a valid signed BotMesh transport frame from stored text."""
+        del umo, event
+        raw = str(content or "")
+        if not raw or not self.codec.has_protocol_hint(raw):
+            return raw
+        try:
+            envelope, visible = self.codec.extract(raw)
+        except ProtocolError:
+            return raw
+        if envelope is None:
+            return raw
+        return str(visible or "").strip() or raw
 
     async def proactive_topics_context(
         self,
@@ -2847,9 +2939,11 @@ class BotMeshPlugin(Star):
                 relation_to_source,
                 group_id,
             )
+            history_context = await self._relationship_history_context(event)
             response = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=(
+                    f"{history_context}\n\n"
                     f"Bot {source.display_name}（{source.bot_id}）直接询问你：\n"
                     f"{question}\n\n"
                     "请给出你自己的真实回答。不要在开头添加 @，插件会负责原生提及。"

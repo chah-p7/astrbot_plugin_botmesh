@@ -17,6 +17,38 @@ def unregister_provider(provider: Any) -> None:
         _provider = None
 
 
+def get_chat_history_scope(
+    *,
+    umo: str,
+    event: Any | None = None,
+) -> dict[str, Any]:
+    """Expose BotMesh logical-group selectors to chat_history_context."""
+    provider = _provider
+    if provider is None:
+        return {}
+    method = getattr(provider, "chat_history_scope", None)
+    if not callable(method):
+        return {}
+    result = method(umo=umo, event=event)
+    return dict(result) if isinstance(result, dict) else {}
+
+
+def normalize_chat_history_message(
+    *,
+    umo: str,
+    content: str,
+    event: Any | None = None,
+) -> str:
+    """Return the verified visible body of a BotMesh-framed group message."""
+    provider = _provider
+    if provider is None:
+        return str(content or "")
+    method = getattr(provider, "normalize_chat_history_message", None)
+    if not callable(method):
+        return str(content or "")
+    return str(method(umo=umo, content=content, event=event) or content or "")
+
+
 async def get_proactive_topics_context(
     *,
     umo: str,

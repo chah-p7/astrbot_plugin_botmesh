@@ -938,6 +938,11 @@ class PluginWorkspaceTests(unittest.IsolatedAsyncioTestCase):
                     "group_id": "main_group",
                     "bot_id": "bot_a",
                     "platform_group_id": "A_GROUP",
+                },
+                {
+                    "group_id": "main_group",
+                    "bot_id": "bot_b",
+                    "platform_group_id": "B_GROUP",
                 }
             ],
             persona_profiles=[
@@ -971,6 +976,21 @@ class PluginWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             content="大家今天想聊点什么？",
             event=event,
         )
+        history_scope = botmesh_integration.get_chat_history_scope(
+            umo=event.unified_msg_origin,
+            event=event,
+        )
+        normalized = botmesh_integration.normalize_chat_history_message(
+            umo=event.unified_msg_origin,
+            content=framed,
+            event=event,
+        )
+        tampered = framed.replace("大家", "别的", 1)
+        untrusted = botmesh_integration.normalize_chat_history_message(
+            umo=event.unified_msg_origin,
+            content=tampered,
+            event=event,
+        )
         envelope, content = plugin.codec.extract(framed)
 
         self.assertTrue(context["enabled"])
@@ -984,6 +1004,15 @@ class PluginWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(envelope.is_display)
         self.assertEqual(envelope.source_bot_id, "bot_a")
         self.assertEqual(envelope.target_bot_id, "bot_a")
+        self.assertEqual(history_scope["selector"], "botmesh:main_group")
+        self.assertIn("A_GROUP", history_scope["selectors"])
+        self.assertIn("B_GROUP", history_scope["selectors"])
+        self.assertIn(
+            "onebot_second:GroupMessage:B_GROUP",
+            history_scope["selectors"],
+        )
+        self.assertEqual(normalized, "大家今天想聊点什么？")
+        self.assertEqual(untrusted, tampered)
 
     async def test_group_botmesh_persona_replaces_native_system_prompt(self):
         config = _Config(
@@ -1212,6 +1241,23 @@ class PluginWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             _Platform("onebot_second", "aiocqhttp")
         )
         plugin = plugin_main.BotMeshPlugin(context, config)
+        history_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(history_directory.cleanup)
+        history_path = Path(history_directory.name) / "history.sqlite3"
+        _create_chat_history_db(
+            history_path,
+            [
+                (
+                    "onebot_second:GroupMessage:B_GROUP",
+                    time.time() - 30,
+                    "90001",
+                    "群友甲",
+                    "这是目标 Bot 此前没有被唤醒时收到的群聊消息",
+                    "target-history-1",
+                )
+            ],
+        )
+        plugin._chat_history_context_db_path = history_path
 
         result = await plugin._send_request(
             _Event("10001", "onebot_main", group_id="A_GROUP"),
@@ -1227,6 +1273,11 @@ class PluginWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("本群挚友", system_prompt)
         self.assertIn("熟悉且直接", system_prompt)
         self.assertIn("当前群 ID=main_group", system_prompt)
+        self.assertIn(
+            "这是目标 Bot 此前没有被唤醒时收到的群聊消息",
+            context.last_agent_call["prompt"],
+        )
+        self.assertIn("botmesh_recent_history", context.last_agent_call["prompt"])
         self.assertEqual(
             context.last_agent_call["event"].unified_msg_origin,
             "onebot_second:GroupMessage:B_GROUP",
