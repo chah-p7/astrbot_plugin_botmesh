@@ -971,6 +971,22 @@ class PluginWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             umo=event.unified_msg_origin,
             event=event,
         )
+        restored_context = await botmesh_integration.get_proactive_topics_context(
+            umo="aiocqhttp:GroupMessage:A_GROUP",
+            identity={
+                "platform_id": "onebot_main",
+                "self_id": "10001",
+                "group_id": "A_GROUP",
+            },
+        )
+        conflicting_context = await botmesh_integration.get_proactive_topics_context(
+            umo="aiocqhttp:GroupMessage:A_GROUP",
+            identity={
+                "platform_id": "onebot_main",
+                "self_id": "10002",
+                "group_id": "A_GROUP",
+            },
+        )
         framed = botmesh_integration.wrap_proactive_topics_message(
             umo=event.unified_msg_origin,
             content="大家今天想聊点什么？",
@@ -995,7 +1011,15 @@ class PluginWorkspaceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(context["enabled"])
         self.assertEqual(context["bot_id"], "bot_a")
+        self.assertEqual(context["platform_id"], "onebot_main")
+        self.assertEqual(context["account_id"], "10001")
+        self.assertEqual(context["raw_group_id"], "A_GROUP")
         self.assertEqual(context["logical_group_id"], "main_group")
+        self.assertTrue(restored_context["enabled"])
+        self.assertEqual(restored_context["bot_id"], "bot_a")
+        self.assertEqual(restored_context["logical_group_id"], "main_group")
+        self.assertFalse(conflicting_context["enabled"])
+        self.assertEqual(conflicting_context["error"], "identity_unresolved")
         self.assertIn("小A的 BotMesh 主群人格", context["persona_prompt"])
         self.assertIn("bot_a → bot_b", context["policy_prompt"])
         self.assertIn("不得声称已经询问其他 Bot", context["policy_prompt"])

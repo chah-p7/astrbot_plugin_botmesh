@@ -2565,13 +2565,22 @@ class BotMeshPlugin(Star):
         *,
         umo: str,
         event: AstrMessageEvent | None = None,
+        identity: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Expose BotMesh identity, persona, relations and history to proactive_topics."""
         if self._configuration_error:
-            return {}
-        bot, group_id = self._proactive_scope(umo, event)
+            return {
+                "available": True,
+                "enabled": False,
+                "error": "configuration_error",
+            }
+        bot, group_id, raw_group_id = self._proactive_scope(umo, event, identity)
         if bot is None:
-            return {}
+            return {
+                "available": True,
+                "enabled": False,
+                "error": "identity_unresolved",
+            }
         persona_prompt = await self._persona_prompt_for_scope(bot, group_id)
         relation_rows = [
             self._format_relation(relation, group_id)
@@ -2597,8 +2606,12 @@ class BotMeshPlugin(Star):
             "</botmesh_proactive_topics_policy>"
         )
         return {
+            "available": True,
             "enabled": True,
             "bot_id": bot.bot_id,
+            "platform_id": bot.platform_id,
+            "account_id": bot.account_id,
+            "raw_group_id": raw_group_id,
             "logical_group_id": group_id,
             "persona_prompt": persona_prompt,
             "policy_prompt": policy_prompt,
@@ -2611,12 +2624,17 @@ class BotMeshPlugin(Star):
         umo: str,
         content: str,
         event: AstrMessageEvent | None = None,
+        identity: dict[str, Any] | None = None,
     ) -> str:
         """Attach a signed display frame so proactive Bot text cannot re-wake Bots."""
         cleaned = str(content or "").strip()
         if not cleaned or not self.codec.is_ready:
             return cleaned
-        bot, _group_id = self._proactive_scope(umo, event)
+        bot, _group_id, _raw_group_id = self._proactive_scope(
+            umo,
+            event,
+            identity,
+        )
         if bot is None:
             return cleaned
         display = self.codec.new_display(bot.bot_id, bot.bot_id)
@@ -2626,19 +2644,76 @@ class BotMeshPlugin(Star):
         self,
         umo: str,
         event: AstrMessageEvent | None,
-    ) -> tuple[BotNode | None, str]:
+        identity: dict[str, Any] | None = None,
+    ) -> tuple[BotNode | None, str, str]:
+        hint = identity if isinstance(identity, dict) else {}
+        hint_platform_id = str(hint.get("platform_id", "") or "").strip()
+        hint_account_id = str(
+            hint.get("self_id", "") or hint.get("account_id", "") or ""
+        ).strip()
+        hint_group_id = str(
+            hint.get("group_id", "") or hint.get("raw_group_id", "") or ""
+        ).strip()
+        platform_bot = self.graph.get_by_platform(hint_platform_id)
+        account_bot = self.graph.get_by_account(hint_account_id)
+        if (
+            platform_bot is not None
+            and account_bot is not None
+            and platform_bot.bot_id != account_bot.bot_id
+        ):
+            return None, "", ""
+        hint_bot = platform_bot or account_bot
+        if hint_bot is not None:
+            if hint_platform_id and hint_bot.platform_id != hint_platform_id:
+                return None, "", ""
+            if hint_account_id and hint_bot.account_id != hint_account_id:
+                return None, "", ""
+
         if event is not None:
-            bot = self.graph.get_bot(self._self_bot_id_for_event(event))
-            raw_group_id = self._raw_group_id_for_event(event)
+            try:
+                event_platform_id = str(event.get_platform_id() or "").strip()
+            except Exception:
+                event_platform_id = ""
+            try:
+                event_account_id = str(event.get_self_id() or "").strip()
+            except Exception:
+                event_account_id = ""
+            if (
+                hint_platform_id
+                and event_platform_id
+                and hint_platform_id != event_platform_id
+            ):
+                return None, "", ""
+            if (
+                hint_account_id
+                and event_account_id
+                and hint_account_id != event_account_id
+            ):
+                return None, "", ""
+            event_bot = self.graph.get_bot(self._self_bot_id_for_event(event))
+            event_group_id = self._raw_group_id_for_event(event)
+            if (
+                hint_bot is not None
+                and event_bot is not None
+                and hint_bot.bot_id != event_bot.bot_id
+            ):
+                return None, "", ""
+            if hint_group_id and event_group_id and hint_group_id != event_group_id:
+                return None, "", ""
+            bot = event_bot or hint_bot
+            raw_group_id = event_group_id or hint_group_id
+        elif hint_bot is not None or hint_group_id:
+            bot = hint_bot
+            raw_group_id = hint_group_id
         else:
             parts = str(umo or "").split(":", 2)
             platform_id = parts[0].strip() if parts else ""
             raw_group_id = parts[2].strip() if len(parts) == 3 else ""
             bot = self.graph.get_by_platform(platform_id)
-        if bot is None:
-            return None, ""
+        if bot is None or not raw_group_id:
+            return None, "", ""
         group_id = self.group_resolver.resolve(bot.bot_id, raw_group_id)
-        return bot, group_id
+        return bot, group_id, raw_group_id
 
     async def _persist_agent_conversation(
         self,

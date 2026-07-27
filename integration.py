@@ -53,14 +53,19 @@ async def get_proactive_topics_context(
     *,
     umo: str,
     event: Any | None = None,
+    identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     provider = _provider
     if provider is None:
-        return {}
+        return {
+            "available": False,
+            "enabled": False,
+            "error": "provider_unavailable",
+        }
     method = getattr(provider, "proactive_topics_context", None)
     if not callable(method):
-        return {}
-    result = await method(umo=umo, event=event)
+        return {"available": False, "enabled": False, "error": "api_unavailable"}
+    result = await method(umo=umo, event=event, identity=identity)
     return dict(result) if isinstance(result, dict) else {}
 
 
@@ -69,6 +74,7 @@ def wrap_proactive_topics_message(
     umo: str,
     content: str,
     event: Any | None = None,
+    identity: dict[str, Any] | None = None,
 ) -> str:
     provider = _provider
     if provider is None:
@@ -76,4 +82,8 @@ def wrap_proactive_topics_message(
     method = getattr(provider, "wrap_proactive_topics_message", None)
     if not callable(method):
         return str(content or "")
-    return str(method(umo=umo, content=content, event=event) or content or "")
+    return str(
+        method(umo=umo, content=content, event=event, identity=identity)
+        or content
+        or ""
+    )
