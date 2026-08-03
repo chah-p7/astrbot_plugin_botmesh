@@ -17,6 +17,7 @@ class SocialStateError(ValueError):
 @dataclass(frozen=True, slots=True)
 class RelationshipDelta:
     active_mode: str = ""
+    address_as: str | None = None
     trust_delta: float = 0.0
     familiarity_delta: float = 0.0
     affinity_delta: float = 0.0
@@ -31,6 +32,7 @@ class RelationshipState:
     source_bot_id: str
     target_bot_id: str
     active_mode: str = ""
+    address_as_override: str = ""
     trust_delta: float = 0.0
     familiarity_delta: float = 0.0
     affinity_delta: float = 0.0
@@ -45,6 +47,7 @@ class RelationshipState:
             source_bot_id=clean_text(data.get("source_bot_id")),
             target_bot_id=clean_text(data.get("target_bot_id")),
             active_mode=_limited(data.get("active_mode"), 40),
+            address_as_override=_limited(data.get("address_as_override"), 80),
             trust_delta=_clamp(data.get("trust_delta"), -0.5, 0.5, 0.0),
             familiarity_delta=_clamp(
                 data.get("familiarity_delta"), -0.5, 0.5, 0.0
@@ -82,9 +85,20 @@ def parse_relationship_delta(
             reason=_limited(data.get("reason"), 300),
             accepted=False,
         )
+    address_as: str | None = None
+    if "address_as" in data and data.get("address_as") is not None:
+        raw_address = data.get("address_as")
+        if not isinstance(raw_address, str):
+            raise SocialStateError("address_as 必须是字符串或 null")
+        address_as = re.sub(r"\s+", " ", raw_address).strip()
+        if len(address_as) > 80:
+            raise SocialStateError("address_as 不能超过 80 个字符")
+        if "[BOTMESH/1:" in address_as.upper():
+            raise SocialStateError("address_as 包含保留协议文本")
     step = _clamp(max_step, 0.001, 0.25, 0.05)
     return RelationshipDelta(
         active_mode=_limited(data.get("active_mode"), 40),
+        address_as=address_as,
         trust_delta=_clamp(data.get("trust_delta"), -step, step, 0.0),
         familiarity_delta=_clamp(
             data.get("familiarity_delta"), -step, step, 0.0
@@ -107,8 +121,17 @@ def effective_relation(
     if not isinstance(state, RelationshipState):
         state = RelationshipState.from_mapping(state)
     mode_suffix = f"；当前互动模式：{state.active_mode}" if state.active_mode else ""
+    address_options = list(base.address_options)
+    if base.address_as and base.address_as not in address_options:
+        address_options.insert(0, base.address_as)
+    effective_address = (
+        state.address_as_override
+        if state.address_as_override in address_options
+        else base.address_as
+    )
     return replace(
         base,
+        address_as=effective_address,
         trust=_clamp(base.trust + state.trust_delta, 0.0, 1.0, base.trust),
         familiarity=_clamp(
             base.familiarity + state.familiarity_delta,
