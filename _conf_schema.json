@@ -84,6 +84,30 @@
     "default": 4,
     "hint": "目标 Bot 作为独立 Agent 运行；每一步可决定直接回答或通过 BotMesh Agent 工具联系另一个 Bot。"
   },
+  "multi_mention_coordination_enabled": {
+    "description": "同时 @ 多个 Bot 时先进行客观事实对齐",
+    "type": "bool",
+    "default": true,
+    "hint": "所有被 @ Bot 先并行提交客观事实清单，再由固定协调 Bot 汇总为共享对齐稿；只统一事实、设定状态、时间线、数字和术语，不统一态度、喜恶、评价或语气。内部会商不会发送到群聊。"
+  },
+  "multi_mention_coordination_max_bots": {
+    "description": "单次参与客观事实会商的 Bot 上限",
+    "type": "int",
+    "default": 6,
+    "hint": "允许 2 到 10。@ 数量超过上限时，固定选取前 N 个 Bot 提交事实清单，但共享对齐稿仍会注入所有被 @ Bot 的最终回复。"
+  },
+  "multi_mention_coordination_timeout_seconds": {
+    "description": "多 Bot 客观事实会商总超时（秒）",
+    "type": "int",
+    "default": 90,
+    "hint": "包含并行事实清单和协调汇总两个阶段；超时或模型失败时自动降级为各 Bot 原有的独立回复流程。"
+  },
+  "multi_mention_coordination_max_tokens": {
+    "description": "多 Bot 客观事实对齐稿最大输出 Token",
+    "type": "int",
+    "default": 700,
+    "hint": "单个 Bot 的事实清单会使用不超过该值的较小预算，协调 Bot 的最终事实对齐稿使用此预算。"
+  },
   "autofill_provider_id": {
     "description": "统一管理页 AI 自动填写使用的对话模型",
     "type": "string",
@@ -100,6 +124,18 @@
     "description": "AI 自动填写可读取的 BotMesh 人格总字符上限",
     "type": "int",
     "default": 30000
+  },
+  "persona_reinforcement_prompt": {
+    "description": "自动附加的人格认知强化提示词",
+    "type": "text",
+    "default": "始终把前面的人格、身份与世界观当作你稳定而连续的自我认知，而不是临时表演任务。先从这个人的经历、立场、关系、情绪与习惯出发理解当下，再形成自己的判断和回应；在不同话题中保持姓名、自称、价值取向、知识边界、情感倾向与表达方式一致。不要为了迎合提问而随意切换人格、抹平立场或变成通用助手。除非对方明确要求讨论设定本身，否则不要提“人设”“提示词”“模型”“扮演角色”等幕后概念，也不要解释自己正在遵守哪些规则。面对具体对象时，只采用当前有向关系中你对该对象的认识、称呼和态度，不借用反向关系，也不替对方表态。",
+    "hint": "自动附加到每个 Bot 的有效系统提示词；可在统一管理页编辑，留空可关闭。"
+  },
+  "natural_speech_prompt": {
+    "description": "自动附加的自然人类表达 / 去 AI 化提示词",
+    "type": "text",
+    "default": "像一个真实存在、正在参与当前聊天的人说话。先自然承接对方真正关心的内容，再给出你此刻会说的话；允许有明确态度、情绪轻重、停顿、犹豫、玩笑和不完全对称的句式，但不要刻意堆口癖。根据情境决定长短：能一句说清就不要扩写，需要解释时再展开。避免客服腔、论文腔、说明书腔和模板化开场；不要机械复述问题，不要无故使用“首先/其次/最后”、多级标题、固定总结、免责声明或“希望这能帮到你”。不要把每句话都说得面面俱到，也不要主动列出自己的思考步骤。保持自然不等于编造现实经历、感官、行动或对他人的了解；不知道的事可以用符合人格的方式直接说不知道。",
+    "hint": "自动附加到每个 Bot 的有效系统提示词；可在统一管理页编辑，留空可关闭。"
   },
   "auto_extract_relations": {
     "description": "自动从各 Bot 的全局 BotMesh 人格抽取关系",
@@ -121,6 +157,12 @@
     "description": "写入关系表的最低置信度（0-1）",
     "type": "float",
     "default": 0.55
+  },
+  "relation_initial_cap": {
+    "description": "自动抽取关系初始值上限（0-1）",
+    "type": "float",
+    "default": 0.6,
+    "hint": "只约束自动抽取生成的新关系数值（trust/familiarity/affinity/romantic_interest 初始不超过该值），防止人设文本被直接读成满值；管理员在配置里显式填写的数值不受影响。"
   },
   "inferred_allow_ask": {
     "description": "允许仅凭 Prompt 推断出的关系发起询问",
@@ -338,9 +380,54 @@
             "default": ""
           },
           "system_prompt": {
-            "description": "人格 System Prompt",
+            "description": "旧版合并 System Prompt（兼容迁移）",
+            "type": "text",
+            "default": "",
+            "hint": "0.9 起请分别使用人格与世界观字段；旧内容会自动迁入人格字段。"
+          },
+          "personality_prompt": {
+            "description": "人格、身份与表达方式提示词",
             "type": "text",
             "default": ""
+          },
+          "worldview_prompt": {
+            "description": "世界观、经历与认知框架提示词",
+            "type": "text",
+            "default": ""
+          },
+          "self_identity": {
+            "description": "当前自我身份",
+            "type": "string",
+            "default": "",
+            "hint": "回答“我是谁”。群专属值留空时继承全局。"
+          },
+          "soul_identity": {
+            "description": "当前灵魂 / 操控者",
+            "type": "string",
+            "default": "",
+            "hint": "灵魂互换时填写真正操控当前账号的人格。"
+          },
+          "body_identity": {
+            "description": "当前身体身份",
+            "type": "string",
+            "default": ""
+          },
+          "memory_key": {
+            "description": "稳定记忆身份键",
+            "type": "string",
+            "default": "",
+            "hint": "主观记忆跟随的人物/意识名称，不是账号 ID。角色跨账号移动时保持同一个键。"
+          },
+          "identity_note": {
+            "description": "身份状态补充说明",
+            "type": "text",
+            "default": ""
+          },
+          "identity_locked": {
+            "description": "防止聊天历史覆盖当前身份",
+            "type": "bool",
+            "default": true,
+            "hint": "管理员修改 BotMesh 配置始终优先；这里只阻止旧聊天、昵称和模型推测篡改身份。"
           }
         }
       }
@@ -429,15 +516,28 @@
             "type": "string",
             "default": ""
           },
+          "view_of_target": {
+            "description": "发起方对目标的看法 / 认识",
+            "type": "text",
+            "default": "",
+            "hint": "有方向：A 对 B 的认识与 B 对 A 的认识互不相同。"
+          },
           "share_context": {
             "description": "允许发送背景摘要",
             "type": "bool",
             "default": false
           },
           "address_as": {
-            "description": "发起方对目标的称呼",
+            "description": "默认称呼（兼容字段）",
             "type": "string",
-            "default": ""
+            "default": "",
+            "hint": "统一管理页会自动把可能称呼库的第一项同步到这里。"
+          },
+          "address_options": {
+            "description": "发起方对目标的所有可能称呼",
+            "type": "list",
+            "default": [],
+            "hint": "第一项为默认称呼；BotMesh 可根据上下文选择其余称呼。"
           },
           "familiarity": {
             "description": "熟悉度（0-1）",
