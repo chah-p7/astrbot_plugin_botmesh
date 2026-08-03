@@ -1,32 +1,32 @@
 :root {
   color-scheme: light;
-  --bg: #f5f7fb;
-  --panel: #ffffff;
-  --panel-soft: #f8fafc;
-  --text: #152036;
-  --muted: #68748a;
-  --line: #dce3ed;
-  --primary: #5b5bd6;
-  --primary-strong: #4646b8;
-  --primary-soft: #ededff;
-  --danger: #c53e55;
-  --success: #177c55;
-  --shadow: 0 14px 38px rgba(28, 38, 64, 0.08);
+  --bg: #f3f5f1;
+  --panel: #fbfcfa;
+  --panel-soft: #eef3ef;
+  --text: #18231f;
+  --muted: #62716b;
+  --line: #d6dfda;
+  --primary: #2f7165;
+  --primary-strong: #20584f;
+  --primary-soft: #e1efea;
+  --danger: #b34848;
+  --success: #27704f;
+  --shadow: 0 14px 36px rgba(28, 51, 43, 0.08);
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --bg: #11151d;
-  --panel: #1a202b;
-  --panel-soft: #151a23;
-  --text: #edf1f8;
-  --muted: #a8b1c2;
-  --line: #30394a;
-  --primary: #8b8bf4;
-  --primary-strong: #a4a4ff;
-  --primary-soft: #29294a;
-  --danger: #ff7d91;
-  --success: #63d3a6;
+  --bg: #101714;
+  --panel: #18211d;
+  --panel-soft: #141c19;
+  --text: #edf4f0;
+  --muted: #a9b8b1;
+  --line: #32413a;
+  --primary: #72b3a3;
+  --primary-strong: #91caba;
+  --primary-soft: #203b34;
+  --danger: #ef8b8b;
+  --success: #75c99d;
   --shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
 }
 
@@ -38,7 +38,7 @@ body {
   margin: 0;
   min-width: 320px;
   background:
-    radial-gradient(circle at 10% 0%, rgba(91, 91, 214, 0.12), transparent 30rem),
+    radial-gradient(circle at 10% 0%, rgba(47, 113, 101, 0.14), transparent 30rem),
     var(--bg);
   color: var(--text);
   font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -300,6 +300,18 @@ textarea.control {
   resize: vertical;
 }
 
+.dynamic-address-review {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--primary);
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .toggle-grid {
   display: grid;
   grid-column: 1 / -1;
@@ -523,6 +535,14 @@ textarea.control {
   min-height: 72px;
 }
 
+.split-field-actions {
+  align-items: stretch;
+}
+
+.split-field-actions .button {
+  flex: 1 1 180px;
+}
+
 .autofill-group {
   display: grid;
   gap: 6px;
@@ -593,6 +613,10 @@ textarea.control {
   border-collapse: collapse;
 }
 
+.persona-table {
+  min-width: 1840px;
+}
+
 .config-table th,
 .config-table td {
   padding: 14px;
@@ -633,9 +657,42 @@ textarea.control {
 }
 
 .persona-table-prompt {
-  min-width: 360px;
+  min-width: 330px;
   min-height: 10rem !important;
   line-height: 1.55;
+}
+
+.persona-identity-state {
+  min-width: 260px;
+}
+
+.persona-identity-state label {
+  display: block;
+  margin-bottom: 9px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.persona-identity-state label:last-child {
+  margin-bottom: 0;
+}
+
+.identity-state-input,
+.identity-lock-select {
+  min-width: 230px;
+  margin-top: 4px;
+}
+
+.identity-state-note {
+  min-width: 230px;
+  min-height: 4.5rem !important;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.relation-view-field textarea {
+  min-height: 7rem;
 }
 
 .platform-group-input {
@@ -736,6 +793,15 @@ textarea.control {
 
 .settings-field {
   grid-column: span 4;
+}
+
+.settings-field-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-field-wide textarea {
+  min-height: 11rem;
+  line-height: 1.55;
 }
 
 .settings-grid > .toggle {
