@@ -23,9 +23,13 @@ from astrbot_plugin_botmesh.core import (
     RelationshipEditorError,
     RelationshipDelta,
     RelationshipState,
+    SocialStateError,
     apply_autofill_response,
+    apply_field_autofill_response,
     apply_persona_adapt_response,
     build_autofill_prompt,
+    build_identity_system_block,
+    build_field_autofill_prompt,
     build_persona_adapt_prompt,
     build_observation_delivery,
     build_relationship_extraction_prompt,
@@ -46,6 +50,7 @@ from astrbot_plugin_botmesh.core import (
     select_observer,
     relationship_editor_payload,
     resolve_persona_prompt,
+    resolve_persona_identity,
 )
 
 
@@ -198,6 +203,138 @@ class PersonaAdaptTests(unittest.TestCase):
                 target_bot_ids=["bot_a"],
                 group_id="main",
             )
+
+
+class FieldAutofillTests(unittest.TestCase):
+    def test_persona_and_worldview_resolve_independently_by_group(self):
+        profiles = normalize_persona_profiles(
+            [
+                {
+                    "bot_id": "bot_a",
+                    "group_id": "",
+                    "personality_prompt": "全局人格",
+                    "worldview_prompt": "全局世界观",
+                },
+                {
+                    "bot_id": "bot_a",
+                    "group_id": "main",
+                    "personality_prompt": "",
+                    "worldview_prompt": "主群世界观",
+                },
+            ],
+            make_graph().bots,
+        )
+
+        prompt = resolve_persona_prompt(profiles, "bot_a", "main")
+
+        self.assertIn("全局人格", prompt)
+        self.assertIn("主群世界观", prompt)
+        self.assertNotIn("全局世界观", prompt)
+
+    def test_split_ai_updates_only_requested_persona_field(self):
+        profiles = normalize_persona_profiles(
+            [
+                {
+                    "bot_id": "bot_a",
+                    "personality_prompt": "原人格",
+                    "worldview_prompt": "保留世界观",
+                }
+            ],
+            make_graph().bots,
+        )
+        prompt = build_field_autofill_prompt(
+            kind="personality",
+            bots=[{"bot_id": "bot_a", "display_name": "小A"}],
+            users=[],
+            persona_profiles=profiles,
+            relations=[],
+            target_bot_ids=["bot_a"],
+            instruction="写得更有主见",
+        )
+        self.assertIn("本次只能返回 personality_prompt", prompt)
+        result = apply_field_autofill_response(
+            '{"personas":[{"bot_id":"bot_a",'
+            '"personality_prompt":"新人格","worldview_prompt":"越权修改"}],"notes":[]}',
+            kind="personality",
+            persona_profiles=profiles,
+            relations=[],
+            target_bot_ids=["bot_a"],
+        )
+        row = result.persona_profiles[0]
+        self.assertEqual(row["personality_prompt"], "新人格")
+        self.assertEqual(row["worldview_prompt"], "保留世界观")
+
+    def test_identity_ai_updates_memory_key_without_touching_prompts(self):
+        profiles = normalize_persona_profiles(
+            [
+                {
+                    "bot_id": "bot_a",
+                    "personality_prompt": "保留人格",
+                    "worldview_prompt": "保留世界观",
+                }
+            ],
+            make_graph().bots,
+        )
+        prompt = build_field_autofill_prompt(
+            kind="identity",
+            bots=[{"bot_id": "bot_a", "display_name": "Rev"}],
+            users=[],
+            persona_profiles=profiles,
+            relations=[],
+            target_bot_ids=["bot_a"],
+            group_id="soul_swap",
+            instruction="当前由蔚来操控莉芙身体",
+        )
+        self.assertIn("memory_key", prompt)
+        result = apply_field_autofill_response(
+            '{"personas":[{"bot_id":"bot_a","self_identity":"莉芙",'
+            '"soul_identity":"蔚来","body_identity":"莉芙",'
+            '"memory_key":"蔚来","identity_note":"灵魂互换",'
+            '"identity_locked":true,"personality_prompt":"不得写入"}],"notes":[]}',
+            kind="identity",
+            persona_profiles=profiles,
+            relations=[],
+            target_bot_ids=["bot_a"],
+            group_id="soul_swap",
+        )
+        row = next(item for item in result.persona_profiles if item["group_id"] == "soul_swap")
+        self.assertEqual(row["memory_key"], "蔚来")
+        self.assertEqual(row["soul_identity"], "蔚来")
+        self.assertEqual(row["personality_prompt"], "")
+
+    def test_relation_view_is_directional_and_group_copy_keeps_permissions(self):
+        relations = [
+            {
+                "source_bot_id": "bot_a",
+                "target_bot_id": "bot_b",
+                "group_id": "",
+                "relation_type": "friend",
+                "allow_ask": True,
+                "share_context": True,
+                "view_of_target": "旧看法",
+            }
+        ]
+        result = apply_field_autofill_response(
+            '{"relations":[{"source_bot_id":"bot_a","target_bot_id":"bot_b",'
+            '"view_of_target":"把小B视为可靠但偶尔冒进的搭档",'
+            '"allow_ask":false},{"source_bot_id":"bot_b","target_bot_id":"bot_a",'
+            '"view_of_target":"不应写入"}],"notes":[]}',
+            kind="relation_view",
+            persona_profiles=[],
+            relations=relations,
+            target_directions=[("bot_a", "bot_b")],
+            group_id="main",
+        )
+        group_row = next(
+            row for row in result.relations if row.get("group_id") == "main"
+        )
+        self.assertEqual(
+            group_row["view_of_target"],
+            "把小B视为可靠但偶尔冒进的搭档",
+        )
+        self.assertTrue(group_row["allow_ask"])
+        self.assertTrue(group_row["share_context"])
+        self.assertEqual(result.updated_relations, (("bot_a", "bot_b"),))
 
 
 class DeliveryTests(unittest.TestCase):
@@ -602,6 +739,47 @@ class AutofillTests(unittest.TestCase):
 
 
 class PersonaProfileTests(unittest.TestCase):
+    def test_structured_identity_resolves_from_current_group_with_fallback(self):
+        bots = make_graph().bots
+        profiles = normalize_persona_profiles(
+            [
+                {
+                    "bot_id": "bot_a",
+                    "group_id": "",
+                    "personality_prompt": "全局人格",
+                    "self_identity": "全局自我",
+                    "body_identity": "全局身体",
+                    "identity_locked": True,
+                },
+                {
+                    "bot_id": "bot_a",
+                    "group_id": "soul_swap",
+                    "worldview_prompt": "互换世界观",
+                    "self_identity": "蔚来",
+                    "soul_identity": "蔚来",
+                    "body_identity": "莉芙",
+                    "memory_key": "蔚来",
+                    "identity_note": "账号只是路由标签",
+                    "identity_locked": False,
+                },
+            ],
+            bots,
+        )
+
+        identity = resolve_persona_identity(profiles, "bot_a", "soul_swap")
+        block = build_identity_system_block(
+            identity,
+            scope_id="soul_swap",
+            account_label="莉芙账号",
+        )
+
+        self.assertEqual(identity["self_identity"], "蔚来")
+        self.assertEqual(identity["body_identity"], "莉芙")
+        self.assertEqual(identity["memory_key"], "蔚来")
+        self.assertFalse(identity["locked"])
+        self.assertIn("防历史覆盖：关闭", block)
+        self.assertIn("管理员对 BotMesh Persona 的修改始终可以覆盖", block)
+
     def test_group_persona_overrides_global(self):
         bots = make_graph().bots
         profiles = normalize_persona_profiles(
@@ -819,6 +997,8 @@ class RelationshipEditorTests(unittest.TestCase):
                     "romantic_interest": 2,
                     "interject_priority": 0,
                     "allow_interject": True,
+                    "address_as": "小B",
+                    "address_options": ["小B", "B同学", "小B"],
                     "origin": "system_prompt",
                     "confidence": 0.1,
                 }
@@ -833,6 +1013,8 @@ class RelationshipEditorTests(unittest.TestCase):
         self.assertEqual(row["affinity"], -1.0)
         self.assertEqual(row["romantic_interest"], 1.0)
         self.assertEqual(row["interject_priority"], 0.01)
+        self.assertEqual(row["address_as"], "小B")
+        self.assertEqual(row["address_options"], ["小B", "B同学"])
         self.assertNotIn("origin", row)
         self.assertNotIn("confidence", row)
 
@@ -1002,6 +1184,8 @@ class DynamicRelationshipAndObserverTests(unittest.TestCase):
         base = Relation(
             "bot_a",
             "bot_b",
+            address_as="小B",
+            address_options=("小B", "B同学", "搭档"),
             trust=0.8,
             familiarity=0.4,
             affinity=0.2,
@@ -1014,6 +1198,7 @@ class DynamicRelationshipAndObserverTests(unittest.TestCase):
             "bot_a",
             "bot_b",
             active_mode="玩笑",
+            address_as_override="搭档",
             trust_delta=0.4,
             familiarity_delta=0.2,
             affinity_delta=-0.1,
@@ -1028,6 +1213,27 @@ class DynamicRelationshipAndObserverTests(unittest.TestCase):
         self.assertTrue(current.allow_interject)
         self.assertFalse(current.allow_flirt)
         self.assertIn("玩笑", current.tone)
+        self.assertEqual(current.address_as, "搭档")
+        self.assertEqual(current.address_options, ("小B", "B同学", "搭档"))
+
+    def test_relationship_delta_parses_dynamic_address_actions(self):
+        selected = parse_relationship_delta(
+            '{"active_mode":"亲近","address_as":" 搭档 ","confidence":0.9}',
+        )
+        kept = parse_relationship_delta(
+            '{"active_mode":"常态","address_as":null,"confidence":0.9}',
+        )
+        reset = parse_relationship_delta(
+            '{"active_mode":"常态","address_as":"","confidence":0.9}',
+        )
+
+        self.assertEqual(selected.address_as, "搭档")
+        self.assertIsNone(kept.address_as)
+        self.assertEqual(reset.address_as, "")
+        with self.assertRaises(SocialStateError):
+            parse_relationship_delta(
+                '{"address_as":["错误"],"confidence":0.9}',
+            )
 
     def test_observer_decision_requires_action_score_and_message(self):
         speak = parse_observer_decision(
@@ -1243,9 +1449,49 @@ class StoreTests(unittest.TestCase):
                 reopened.get_relationship_state("bot_a", "bot_b")
             )
 
+    def test_existing_scoped_state_is_migrated_with_dynamic_address_columns(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "botmesh.sqlite3"
+            connection = sqlite3.connect(path)
+            connection.execute(
+                """
+                CREATE TABLE relationship_state_scoped (
+                    source_bot_id TEXT NOT NULL,
+                    target_bot_id TEXT NOT NULL,
+                    group_id TEXT NOT NULL DEFAULT '',
+                    active_mode TEXT NOT NULL DEFAULT '',
+                    trust_delta REAL NOT NULL DEFAULT 0,
+                    familiarity_delta REAL NOT NULL DEFAULT 0,
+                    affinity_delta REAL NOT NULL DEFAULT 0,
+                    romantic_interest_delta REAL NOT NULL DEFAULT 0,
+                    last_reason TEXT NOT NULL DEFAULT '',
+                    version INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (source_bot_id, target_bot_id, group_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO relationship_state_scoped (
+                    source_bot_id, target_bot_id, group_id, active_mode,
+                    trust_delta, updated_at
+                ) VALUES ('bot_a', 'bot_b', 'main', '安慰', 0.1, 1)
+                """
+            )
+            connection.commit()
+            connection.close()
+
+            store = InteractionStore(path)
+            state = store.get_relationship_state("bot_a", "bot_b", "main")
+            self.assertEqual(state.active_mode, "安慰")
+            self.assertEqual(state.address_as_override, "")
+            self.assertAlmostEqual(state.trust_delta, 0.1)
+
     def test_relationship_delta_is_persistent_and_event_is_idempotent(self):
         delta = RelationshipDelta(
             active_mode="安慰",
+            address_as="搭档",
             trust_delta=0.05,
             familiarity_delta=0.02,
             affinity_delta=0.04,
@@ -1279,8 +1525,17 @@ class StoreTests(unittest.TestCase):
             self.assertIsNotNone(state)
             assert state is not None
             self.assertEqual(state.active_mode, "安慰")
+            self.assertEqual(state.address_as_override, "搭档")
             self.assertEqual(state.version, 1)
             self.assertAlmostEqual(state.trust_delta, 0.05)
+            overrides = store.relationship_address_overrides()
+            self.assertEqual(overrides[0]["address_as_override"], "搭档")
+            self.assertTrue(
+                store.clear_relationship_address_override("bot_a", "bot_b")
+            )
+            retained = store.get_relationship_state("bot_a", "bot_b")
+            self.assertEqual(retained.address_as_override, "")
+            self.assertAlmostEqual(retained.trust_delta, 0.05)
             self.assertTrue(store.reset_relationship_state("bot_a", "bot_b"))
             self.assertIsNone(store.get_relationship_state("bot_a", "bot_b"))
             self.assertFalse(store.reset_relationship_state("bot_a", "bot_b"))
