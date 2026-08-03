@@ -1,10 +1,10 @@
 name: astrbot_plugin_botmesh
 display_name: BotMesh
 author: Sirin
-version: 0.8.9
+version: 0.13.5
 desc: 统一管理分群人格与 Bot/用户关系网，通过独立 Agent 直连并由双方平台账号在群聊展示真实互动。
 repo: "https://github.com/chah-p7/astrbot_plugin_botmesh"
-astrbot_version: ">=4.17.0"
+astrbot_version: ">=4.17.0,<5"
 support_platforms:
   - aiocqhttp
   - qq_official
