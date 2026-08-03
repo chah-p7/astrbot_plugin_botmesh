@@ -9,10 +9,12 @@ from .models import BotNode, Relation
 
 MAX_RELATIONS = 500
 MAX_NODES = 200
+MAX_ADDRESS_OPTIONS = 30
 _TEXT_LIMITS = {
     "group_id": 128,
     "relation_type": 80,
     "tone": 500,
+    "view_of_target": 3000,
     "address_as": 80,
 }
 
@@ -32,8 +34,10 @@ def relation_to_config(relation: Relation) -> dict[str, Any]:
         "allow_ask": relation.allow_ask,
         "trust": relation.trust,
         "tone": relation.tone,
+        "view_of_target": relation.view_of_target,
         "share_context": relation.share_context,
         "address_as": relation.address_as,
+        "address_options": list(relation.address_options),
         "familiarity": relation.familiarity,
         "affinity": relation.affinity,
         "romantic_interest": relation.romantic_interest,
@@ -51,6 +55,7 @@ def node_to_config(node: BotNode) -> dict[str, Any]:
             "user_id": node.bot_id,
             "display_name": node.display_name,
             "account_id": node.account_id,
+            "account_ids": list(node.account_ids),
             "description": node.description,
             "aliases": list(node.aliases),
         }
@@ -59,6 +64,7 @@ def node_to_config(node: BotNode) -> dict[str, Any]:
         "bot_id": node.bot_id,
         "display_name": node.display_name,
         "account_id": node.account_id,
+        "account_ids": list(node.account_ids),
         "platform_id": node.platform_id,
         "description": node.description,
         "capabilities": list(node.capabilities),
@@ -95,9 +101,17 @@ def normalize_node_entries(
                 raise RelationshipEditorError(
                     f"第 {index} 个{label}的别名或能力标签不能超过 30 项"
                 )
+            if len(node.account_ids) > 30:
+                raise RelationshipEditorError(
+                    f"第 {index} 个{label}的账号 ID 不能超过 30 项"
+                )
             if any(len(value) > 80 for value in (*node.aliases, *node.capabilities)):
                 raise RelationshipEditorError(
                     f"第 {index} 个{label}的单个别名或能力标签不能超过 80 个字符"
+                )
+            if any(len(value) > 128 for value in node.account_ids):
+                raise RelationshipEditorError(
+                    f"第 {index} 个{label}的单个账号 ID 不能超过 128 个字符"
                 )
             result.append(node)
         return result
@@ -167,6 +181,14 @@ def normalize_relation_entries(
                 raise RelationshipEditorError(
                     f"第 {index} 条关系的 {field_name} 不能超过 {limit} 个字符"
                 )
+        if len(relation.address_options) > MAX_ADDRESS_OPTIONS:
+            raise RelationshipEditorError(
+                f"第 {index} 条关系的可能称呼不能超过 {MAX_ADDRESS_OPTIONS} 个"
+            )
+        if any(len(value) > 80 for value in relation.address_options):
+            raise RelationshipEditorError(
+                f"第 {index} 条关系的单个可能称呼不能超过 80 个字符"
+            )
         relations.append(relation)
 
     try:
