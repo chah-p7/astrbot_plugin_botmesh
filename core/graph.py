@@ -110,6 +110,15 @@ class BotGraph:
             raise GraphConfigError(
                 f"account_id {node.account_id!r} 同时属于 {other.bot_id} 和 {node.bot_id}"
             )
+        for extra_account_id in node.account_ids:
+            if not extra_account_id or is_placeholder_account_id(extra_account_id):
+                continue
+            if extra_account_id in self._accounts:
+                other = self._accounts[extra_account_id]
+                raise GraphConfigError(
+                    f"账号 ID {extra_account_id!r} 同时属于 "
+                    f"{other.bot_id} 和 {node.bot_id}"
+                )
         if expected_type == "bot" and node.platform_id:
             if node.platform_id in self._platforms:
                 other = self._platforms[node.platform_id]
@@ -135,6 +144,9 @@ class BotGraph:
             self._users[node.bot_id] = node
         if not account_is_placeholder:
             self._accounts[node.account_id] = node
+        for extra_account_id in node.account_ids:
+            if extra_account_id and not is_placeholder_account_id(extra_account_id):
+                self._accounts[extra_account_id] = node
         for raw_alias in aliases:
             alias = raw_alias.casefold()
             if alias:
@@ -165,7 +177,12 @@ class BotGraph:
     def _validate_identity_names(self) -> None:
         identities: dict[str, BotNode] = {}
         for bot in self._participants.values():
-            identity_values = [bot.bot_id, bot.display_name, *bot.aliases]
+            identity_values = [
+                bot.bot_id,
+                bot.display_name,
+                *bot.aliases,
+                *bot.account_ids,
+            ]
             if not is_placeholder_account_id(bot.account_id):
                 identity_values.append(bot.account_id)
             for value in identity_values:
@@ -289,6 +306,7 @@ class BotGraph:
                     "bot_id": bot.bot_id,
                     "display_name": bot.display_name,
                     "account_id": bot.account_id,
+                    "account_ids": list(bot.account_ids),
                     "platform_id": bot.platform_id,
                     "description": bot.description,
                     "capabilities": list(bot.capabilities),
@@ -301,6 +319,7 @@ class BotGraph:
                     "user_id": user.bot_id,
                     "display_name": user.display_name,
                     "account_id": user.account_id,
+                    "account_ids": list(user.account_ids),
                     "description": user.description,
                     "aliases": list(user.aliases),
                 }
@@ -315,8 +334,10 @@ class BotGraph:
                     "allow_ask": relation.allow_ask,
                     "trust": relation.trust,
                     "tone": relation.tone,
+                    "view_of_target": relation.view_of_target,
                     "share_context": relation.share_context,
                     "address_as": relation.address_as,
+                    "address_options": list(relation.address_options),
                     "familiarity": relation.familiarity,
                     "affinity": relation.affinity,
                     "romantic_interest": relation.romantic_interest,
