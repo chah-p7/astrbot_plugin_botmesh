@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>BotMesh 统一管理</title>
-    <link rel="stylesheet" href="./style.css?v=0.8.2" />
+    <link rel="stylesheet" href="./style.css?v=0.13.3" />
   </head>
   <body>
     <main class="shell">
@@ -88,8 +88,8 @@
       <section id="personasPanel" class="panel" hidden>
         <div class="section-head">
           <div>
-            <h2>群聊 Bot 人格</h2>
-            <p>先选择群聊范围，再按机器人逐行配置。群内未单独配置时会继承全局人格。</p>
+            <h2>群聊 Bot 人格与世界观</h2>
+            <p>人格、世界观分栏维护；群专属分栏留空时会分别继承全局内容。</p>
           </div>
           <div class="scope-picker">
             <label class="scope-current">
@@ -108,10 +108,26 @@
           </div>
         </div>
         <div id="personaScopeNote" class="scope-note"></div>
+        <div class="persona-adapt-card split-field-ai-card">
+          <div>
+            <strong>AI 分栏填写</strong>
+            <p>按本次要求分别生成人格、结构化身份与记忆键或世界观，只更新所选分栏并写入草稿。</p>
+          </div>
+          <label class="autofill-group">
+            <span>生成模型</span>
+            <select id="promptFieldProviderId" class="control"></select>
+          </label>
+          <textarea id="promptFieldInstruction" class="control" maxlength="4000" placeholder="填写这次的具体要求，例如：人格要克制但有主见；或世界观采用近未来都市背景，并保留已有事实"></textarea>
+          <div class="inline-actions split-field-actions">
+            <button id="personalityAutofillAllButton" class="button button-secondary" type="button">按要求填写本页人格</button>
+            <button id="identityAutofillAllButton" class="button button-secondary" type="button">按要求填写本页身份与记忆键</button>
+            <button id="worldviewAutofillAllButton" class="button button-quiet" type="button">按要求填写本页世界观</button>
+          </div>
+        </div>
         <div id="personaAdaptCard" class="persona-adapt-card" hidden>
           <div>
             <strong>AI 从全部全局人格编排群专属人格</strong>
-            <p>模型会查看所有已有全局人格，可按你的要求整合、修改或交换其中的设定，并尽量沿用原句；也可修改已有关系在该群中的称呼。结果只写入草稿。</p>
+            <p>模型会查看全部全局人格、身份、记忆键和世界观，可按要求整合、修改或交换设定；也可修改已有关系在该群中的称呼。结果只写入草稿。</p>
           </div>
           <label class="autofill-group">
             <span>改写模型</span>
@@ -147,6 +163,18 @@
           </div>
         </div>
         <div id="relationScopeNote" class="scope-note"></div>
+        <div class="persona-adapt-card split-field-ai-card">
+          <div>
+            <strong>AI 填写“对目标的看法 / 认识”</strong>
+            <p>逐条处理当前页的有向关系；只写发起方对目标的认识与主观看法，不会修改称呼、语气、数值或权限。</p>
+          </div>
+          <label class="autofill-group">
+            <span>生成模型</span>
+            <select id="relationViewProviderId" class="control"></select>
+          </label>
+          <textarea id="relationViewInstruction" class="control" maxlength="4000" placeholder="填写这次的要求，例如：结合现有人格写清双方的既往认识、欣赏和戒备；不确定的事实不要编造"></textarea>
+          <button id="relationViewAutofillAllButton" class="button button-secondary" type="button">按要求填写本页全部看法</button>
+        </div>
         <div id="relationList" class="relation-list"></div>
       </section>
 
@@ -154,7 +182,7 @@
         <div class="section-head">
           <div>
             <h2>全部插件设置</h2>
-            <p>身份、安全、通信、Prompt 抽取、动态关系和旁听设置都在这里。</p>
+            <p>身份、安全、通信、默认附加 Prompt、动态关系和旁听设置都在这里。</p>
           </div>
         </div>
         <div id="settingsList" class="settings-groups"></div>
@@ -165,6 +193,7 @@
       </footer>
     </main>
 
-    <script type="module" src="./app.js?v=0.8.2"></script>
+    <script src="/api/plugin/page/bridge-sdk.js"></script>
+    <script type="module" src="./app.js?v=0.13.3"></script>
   </body>
 </html>
