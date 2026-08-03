@@ -56,7 +56,9 @@ def build_relationship_extraction_prompt(
         "同名不确定、只提到普通人类或无法对应目录时，不要猜，放进 unresolved_mentions。\n"
         "A 对 B 与 B 对 A 是不同方向；只抽取这个主体明确表达或强烈蕴含的方向。\n"
         "数值规则：trust/familiarity/romantic_interest 为 0..1；affinity 为 -1..1；"
-        "confidence 为 0..1。浪漫兴趣只是角色设定倾向，不代表对方同意调情。\n\n"
+        "confidence 为 0..1。浪漫兴趣只是角色设定倾向，不代表对方同意调情。\n"
+        "初始数值必须保守：trust/familiarity/affinity/romantic_interest 最高不要超过 0.6；"
+        "关系越疏远数值越低，禁止因为设定措辞强烈就把初始值直接给满。\n\n"
         "候选 Bot 目录：\n"
         f"{directory_text}\n\n"
         "只返回一个 JSON 对象，不要 Markdown，不要解释。格式：\n"
@@ -68,6 +70,7 @@ def build_relationship_extraction_prompt(
         '      "address_as": "主体平时如何称呼目标",\n'
         '      "trust": 0.5, "familiarity": 0.5, "affinity": 0.0,\n'
         '      "romantic_interest": 0.0, "tone": "面对目标时的语气",\n'
+        '      "view_of_target": "主体对目标的认识、印象、判断与主观看法",\n'
         '      "confidence": 0.8, "evidence": "简短概括依据"\n'
         "    }\n"
         "  ],\n"
@@ -87,6 +90,7 @@ def parse_relationship_extraction(
     prompt_hash: str,
     confidence_threshold: float = 0.55,
     inferred_allow_ask: bool = False,
+    initial_cap: float = 0.6,
 ) -> RelationshipExtraction:
     data = _load_json_value(payload)
     if isinstance(data, list):
@@ -108,6 +112,7 @@ def parse_relationship_extraction(
         raise RelationshipExtractionError("relations 必须是数组")
 
     threshold = max(0.0, min(1.0, float(confidence_threshold)))
+    cap = max(0.0, min(1.0, float(initial_cap)))
     by_target: dict[str, Relation] = {}
     unresolved = _parse_unresolved(data.get("unresolved_mentions", []))
     for raw in raw_relations:
@@ -135,14 +140,15 @@ def parse_relationship_extraction(
             relation_type=_limited(raw.get("relation_type"), 80) or "acquaintance",
             # Extraction describes a persona. It cannot grant privacy permissions.
             allow_ask=bool(inferred_allow_ask),
-            trust=_clamp(raw.get("trust"), 0.0, 1.0, 0.5),
+            trust=_capped(raw.get("trust"), 0.0, 1.0, 0.5, cap),
             tone=_limited(raw.get("tone"), 240),
+            view_of_target=_limited(raw.get("view_of_target"), 3000),
             share_context=False,
             address_as=_limited(raw.get("address_as"), 80),
-            familiarity=_clamp(raw.get("familiarity"), 0.0, 1.0, 0.0),
-            affinity=_clamp(raw.get("affinity"), -1.0, 1.0, 0.0),
-            romantic_interest=_clamp(
-                raw.get("romantic_interest"), 0.0, 1.0, 0.0
+            familiarity=_capped(raw.get("familiarity"), 0.0, 1.0, 0.0, cap),
+            affinity=_capped(raw.get("affinity"), -1.0, 1.0, 0.0, cap),
+            romantic_interest=_capped(
+                raw.get("romantic_interest"), 0.0, 1.0, 0.0, cap
             ),
             # Consent is never inferred from prose. A later live invitation must
             # still be accepted by the target Bot.
@@ -211,3 +217,19 @@ def _limited(value: Any, limit: int) -> str:
 
 def _clamp(value: Any, minimum: float, maximum: float, default: float) -> float:
     return max(minimum, min(maximum, clean_float(value, default)))
+
+
+def _capped(
+    value: Any,
+    minimum: float,
+    maximum: float,
+    default: float,
+    cap: float,
+) -> float:
+    """Clamp a value and additionally cap the initial magnitude of auto-inferred rows."""
+    parsed = _clamp(value, minimum, maximum, default)
+    if cap <= 0:
+        return 0.0
+    if minimum >= 0:
+        return min(parsed, cap)
+    return max(-cap, min(cap, parsed))
