@@ -76,6 +76,7 @@ class InteractionStore:
                     relation_type TEXT NOT NULL,
                     trust REAL NOT NULL,
                     tone TEXT NOT NULL DEFAULT '',
+                    view_of_target TEXT NOT NULL DEFAULT '',
                     address_as TEXT NOT NULL DEFAULT '',
                     familiarity REAL NOT NULL DEFAULT 0,
                     affinity REAL NOT NULL DEFAULT 0,
@@ -88,6 +89,17 @@ class InteractionStore:
                 )
                 """
             )
+            inferred_columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(inferred_relations)"
+                ).fetchall()
+            }
+            if "view_of_target" not in inferred_columns:
+                connection.execute(
+                    "ALTER TABLE inferred_relations "
+                    "ADD COLUMN view_of_target TEXT NOT NULL DEFAULT ''"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS relation_extraction_state (
@@ -143,6 +155,7 @@ class InteractionStore:
                     target_bot_id TEXT NOT NULL,
                     group_id TEXT NOT NULL DEFAULT '',
                     active_mode TEXT NOT NULL DEFAULT '',
+                    address_as_override TEXT NOT NULL DEFAULT '',
                     trust_delta REAL NOT NULL DEFAULT 0,
                     familiarity_delta REAL NOT NULL DEFAULT 0,
                     affinity_delta REAL NOT NULL DEFAULT 0,
@@ -177,6 +190,8 @@ class InteractionStore:
                     event_kind TEXT NOT NULL,
                     context_digest TEXT NOT NULL,
                     active_mode TEXT NOT NULL DEFAULT '',
+                    address_as TEXT NOT NULL DEFAULT '',
+                    address_changed INTEGER NOT NULL DEFAULT 0,
                     trust_delta REAL NOT NULL DEFAULT 0,
                     familiarity_delta REAL NOT NULL DEFAULT 0,
                     affinity_delta REAL NOT NULL DEFAULT 0,
@@ -202,6 +217,33 @@ class InteractionStore:
                 FROM relationship_events
                 """
             )
+            state_columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(relationship_state_scoped)"
+                ).fetchall()
+            }
+            if "address_as_override" not in state_columns:
+                connection.execute(
+                    "ALTER TABLE relationship_state_scoped "
+                    "ADD COLUMN address_as_override TEXT NOT NULL DEFAULT ''"
+                )
+            event_columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(relationship_events_scoped)"
+                ).fetchall()
+            }
+            if "address_as" not in event_columns:
+                connection.execute(
+                    "ALTER TABLE relationship_events_scoped "
+                    "ADD COLUMN address_as TEXT NOT NULL DEFAULT ''"
+                )
+            if "address_changed" not in event_columns:
+                connection.execute(
+                    "ALTER TABLE relationship_events_scoped "
+                    "ADD COLUMN address_changed INTEGER NOT NULL DEFAULT 0"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS observer_interjections (
@@ -516,9 +558,9 @@ class InteractionStore:
                     """
                     INSERT INTO inferred_relations (
                         source_bot_id, target_bot_id, relation_type, trust, tone,
-                        address_as, familiarity, affinity, romantic_interest,
+                        view_of_target, address_as, familiarity, affinity, romantic_interest,
                         confidence, evidence, prompt_hash, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         relation.source_bot_id,
@@ -526,6 +568,7 @@ class InteractionStore:
                         relation.relation_type,
                         relation.trust,
                         relation.tone,
+                        relation.view_of_target,
                         relation.address_as,
                         relation.familiarity,
                         relation.affinity,
@@ -577,7 +620,7 @@ class InteractionStore:
             rows = connection.execute(
                 """
                 SELECT source_bot_id, target_bot_id, relation_type, trust, tone,
-                       address_as, familiarity, affinity, romantic_interest,
+                       view_of_target, address_as, familiarity, affinity, romantic_interest,
                        confidence, evidence, prompt_hash
                 FROM inferred_relations
                 ORDER BY source_bot_id, target_bot_id
@@ -618,7 +661,7 @@ class InteractionStore:
             row = connection.execute(
                 """
                 SELECT source_bot_id, target_bot_id, active_mode, trust_delta,
-                       familiarity_delta, affinity_delta,
+                       address_as_override, familiarity_delta, affinity_delta,
                        romantic_interest_delta, last_reason, version, updated_at
                 FROM relationship_state_scoped
                 WHERE source_bot_id=? AND target_bot_id=? AND group_id=?
@@ -626,6 +669,41 @@ class InteractionStore:
                 (source_bot_id, target_bot_id, str(group_id or "")[:128]),
             ).fetchone()
         return RelationshipState.from_mapping(dict(row)) if row else None
+
+    def relationship_address_overrides(self) -> list[dict[str, Any]]:
+        """Return active dynamic address overrides for administrator review."""
+        with self._lock, self._transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT source_bot_id, target_bot_id, group_id,
+                       address_as_override, last_reason, version, updated_at
+                FROM relationship_state_scoped
+                WHERE address_as_override <> ''
+                ORDER BY group_id, source_bot_id, target_bot_id
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def clear_relationship_address_override(
+        self,
+        source_bot_id: str,
+        target_bot_id: str,
+        group_id: str = "",
+    ) -> bool:
+        """Clear only the dynamic address while preserving other evolved state."""
+        scope = str(group_id or "")[:128]
+        now = int(time.time())
+        with self._lock, self._transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE relationship_state_scoped
+                SET address_as_override='', version=version + 1, updated_at=?
+                WHERE source_bot_id=? AND target_bot_id=? AND group_id=?
+                  AND address_as_override <> ''
+                """,
+                (now, source_bot_id, target_bot_id, scope),
+            )
+        return cursor.rowcount > 0
 
     def reset_relationship_state(
         self,
@@ -675,10 +753,10 @@ class InteractionStore:
                     """
                     INSERT INTO relationship_events_scoped (
                         event_id, source_bot_id, target_bot_id, group_id, event_kind,
-                        context_digest, active_mode, trust_delta,
+                        context_digest, active_mode, address_as, address_changed, trust_delta,
                         familiarity_delta, affinity_delta,
                         romantic_interest_delta, confidence, reason, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         event_id,
@@ -688,6 +766,8 @@ class InteractionStore:
                         event_kind,
                         context_digest(context),
                         delta.active_mode,
+                        delta.address_as or "",
+                        1 if delta.address_as is not None else 0,
                         delta.trust_delta,
                         delta.familiarity_delta,
                         delta.affinity_delta,
@@ -703,7 +783,8 @@ class InteractionStore:
             row = connection.execute(
                 """
                 SELECT active_mode, trust_delta, familiarity_delta,
-                       affinity_delta, romantic_interest_delta, version
+                       affinity_delta, romantic_interest_delta,
+                       address_as_override, version
                 FROM relationship_state_scoped
                 WHERE source_bot_id=? AND target_bot_id=? AND group_id=?
                 """,
@@ -711,6 +792,11 @@ class InteractionStore:
             ).fetchone()
             current = dict(row) if row else {}
             active_mode = delta.active_mode or str(current.get("active_mode", ""))
+            address_as_override = (
+                str(delta.address_as or "")
+                if delta.address_as is not None
+                else str(current.get("address_as_override", ""))
+            )
             trust_delta = _clamp_total(
                 float(current.get("trust_delta", 0.0)) + delta.trust_delta, 0.5
             )
@@ -732,12 +818,14 @@ class InteractionStore:
             connection.execute(
                 """
                 INSERT INTO relationship_state_scoped (
-                    source_bot_id, target_bot_id, group_id, active_mode, trust_delta,
+                    source_bot_id, target_bot_id, group_id, active_mode,
+                    address_as_override, trust_delta,
                     familiarity_delta, affinity_delta,
                     romantic_interest_delta, last_reason, version, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(source_bot_id, target_bot_id, group_id) DO UPDATE SET
                     active_mode=excluded.active_mode,
+                    address_as_override=excluded.address_as_override,
                     trust_delta=excluded.trust_delta,
                     familiarity_delta=excluded.familiarity_delta,
                     affinity_delta=excluded.affinity_delta,
@@ -751,6 +839,7 @@ class InteractionStore:
                     target_bot_id,
                     str(group_id or "")[:128],
                     active_mode,
+                    address_as_override,
                     trust_delta,
                     familiarity_delta,
                     affinity_delta,
