@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -48,6 +49,7 @@ class BotNode:
     bot_id: str
     display_name: str
     account_id: str
+    account_ids: tuple[str, ...] = field(default_factory=tuple)
     persona_id: str = ""
     provider_id: str = ""
     description: str = ""
@@ -85,6 +87,19 @@ class BotNode:
             )
         else:
             aliases = ()
+        account_ids_raw = data.get("account_ids", [])
+        if isinstance(account_ids_raw, str):
+            account_ids = tuple(
+                item.strip()
+                for item in account_ids_raw.split(",")
+                if item.strip()
+            )
+        elif isinstance(account_ids_raw, list):
+            account_ids = tuple(
+                clean_text(item) for item in account_ids_raw if clean_text(item)
+            )
+        else:
+            account_ids = ()
         resolved_type = node_type or clean_text(data.get("node_type")) or "bot"
         if resolved_type not in {"bot", "user"}:
             resolved_type = "bot"
@@ -99,6 +114,7 @@ class BotNode:
             account_id=clean_text(
                 data.get("account_id") or data.get("platform_user_id")
             ),
+            account_ids=account_ids,
             node_type=resolved_type,
             persona_id=clean_text(data.get("persona_id")),
             provider_id=clean_text(data.get("provider_id")),
@@ -118,8 +134,10 @@ class Relation:
     allow_ask: bool = True
     trust: float = 0.5
     tone: str = ""
+    view_of_target: str = ""
     share_context: bool = False
     address_as: str = ""
+    address_options: tuple[str, ...] = field(default_factory=tuple)
     familiarity: float = 0.0
     affinity: float = 0.0
     romantic_interest: float = 0.0
@@ -148,6 +166,19 @@ class Relation:
         interject_priority = max(
             0.01, min(100.0, clean_float(data.get("interject_priority"), 1.0))
         )
+        primary_address = clean_text(data.get("address_as"))
+        raw_address_options = data.get("address_options", [])
+        if isinstance(raw_address_options, str):
+            option_values = re.split(r"[,，、\n]", raw_address_options)
+        elif isinstance(raw_address_options, (list, tuple)):
+            option_values = list(raw_address_options)
+        else:
+            option_values = []
+        addresses: list[str] = []
+        for value in (primary_address, *option_values):
+            address = clean_text(value)
+            if address and address not in addresses:
+                addresses.append(address)
         return cls(
             source_bot_id=clean_text(data.get("source_bot_id")),
             target_bot_id=clean_text(data.get("target_bot_id")),
@@ -156,8 +187,14 @@ class Relation:
             allow_ask=clean_bool(data.get("allow_ask"), True),
             trust=trust,
             tone=clean_text(data.get("tone")),
+            view_of_target=clean_text(
+                data.get("view_of_target")
+                or data.get("perception_of_target")
+                or data.get("impression")
+            ),
             share_context=clean_bool(data.get("share_context"), False),
-            address_as=clean_text(data.get("address_as")),
+            address_as=primary_address or (addresses[0] if addresses else ""),
+            address_options=tuple(addresses),
             familiarity=familiarity,
             affinity=affinity,
             romantic_interest=romantic_interest,
