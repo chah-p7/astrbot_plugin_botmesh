@@ -13,6 +13,13 @@ from .delivery import (
     build_reply_delivery,
     build_request_delivery,
 )
+from .field_autofill import (
+    FIELD_AUTOFILL_SYSTEM_PROMPT,
+    FieldAutofillError,
+    FieldAutofillResult,
+    apply_field_autofill_response,
+    build_field_autofill_prompt,
+)
 from .editor import (
     RelationshipEditorError,
     node_to_config,
@@ -41,9 +48,13 @@ from .policy import InteractionGuard, PolicyDecision
 from .persona import (
     MAX_PERSONA_PROMPT_CHARS,
     PersonaProfileError,
+    build_identity_system_block,
+    compose_persona_prompt,
     normalize_persona_profiles,
     persona_profiles_for_group,
     resolve_persona_prompt,
+    resolve_persona_identity,
+    resolve_persona_sections,
 )
 from .persona_adapter import (
     PERSONA_ADAPT_SYSTEM_PROMPT,
@@ -83,6 +94,9 @@ __all__ = [
     "GroupBindingError",
     "GroupResolver",
     "GroupScopeError",
+    "FIELD_AUTOFILL_SYSTEM_PROMPT",
+    "FieldAutofillError",
+    "FieldAutofillResult",
     "InteractionEnvelope",
     "InteractionGuard",
     "InteractionStore",
@@ -95,9 +109,15 @@ __all__ = [
     "PersonaAdaptResult",
     "apply_persona_adapt_response",
     "build_persona_adapt_prompt",
+    "build_field_autofill_prompt",
+    "apply_field_autofill_response",
+    "compose_persona_prompt",
+    "build_identity_system_block",
     "normalize_persona_profiles",
     "persona_profiles_for_group",
     "resolve_persona_prompt",
+    "resolve_persona_identity",
+    "resolve_persona_sections",
     "ProtocolCodec",
     "ProtocolError",
     "Relation",
