@@ -23,11 +23,19 @@ const elements = {
   personaAdaptCard: document.getElementById("personaAdaptCard"),
   personaAdaptInstruction: document.getElementById("personaAdaptInstruction"),
   personaAdaptProvider: document.getElementById("personaAdaptProviderId"),
+  personalityAutofillAll: document.getElementById("personalityAutofillAllButton"),
+  identityAutofillAll: document.getElementById("identityAutofillAllButton"),
+  worldviewAutofillAll: document.getElementById("worldviewAutofillAllButton"),
+  promptFieldProvider: document.getElementById("promptFieldProviderId"),
+  promptFieldInstruction: document.getElementById("promptFieldInstruction"),
   personaList: document.getElementById("personaList"),
   personaScopeNote: document.getElementById("personaScopeNote"),
   relationGroupInput: document.getElementById("relationGroupInput"),
   relationGroupScope: document.getElementById("relationGroupScope"),
   relationList: document.getElementById("relationList"),
+  relationViewAutofillAll: document.getElementById("relationViewAutofillAllButton"),
+  relationViewProvider: document.getElementById("relationViewProviderId"),
+  relationViewInstruction: document.getElementById("relationViewInstruction"),
   relationScopeNote: document.getElementById("relationScopeNote"),
   renamePersonaGroup: document.getElementById("renamePersonaGroupButton"),
   renameRelationGroup: document.getElementById("renameRelationGroupButton"),
@@ -59,6 +67,7 @@ const state = {
   groupBindings: [],
   groupScopes: [],
   observedGroupBindings: [],
+  dynamicAddressOverrides: [],
   discoveredBots: [],
   sharedSecretConfigured: false,
   fallbackSharedSecretConfigured: false,
@@ -67,10 +76,15 @@ const state = {
   saving: false,
   autofilling: false,
   personaAdapting: false,
+  fieldAutofilling: false,
   discoveryLoading: false,
   discoveryInitialized: false,
   activeGroupId: "",
 };
+
+function isBusy() {
+  return state.loading || state.saving || state.autofilling || state.personaAdapting || state.fieldAutofilling;
+}
 
 const accountIdPlaceholders = new Set(["qq_official", "unknown_selfid", "unknown_self_id"]);
 
@@ -86,9 +100,35 @@ function setStatus(message = "", kind = "") {
 
 function splitList(value) {
   return String(value ?? "")
-    .split(/[,，\n]/)
+    .split(/[,，、\n]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function addressLibraryControl(row) {
+  const control = document.createElement("textarea");
+  control.className = "control";
+  control.maxLength = 2400;
+  const values = Array.isArray(row.address_options) && row.address_options.length
+    ? row.address_options
+    : (row.address_as ? [row.address_as] : []);
+  control.value = values.join("\n");
+  control.placeholder = "每行一个称呼；第一行为默认称呼";
+  control.addEventListener("input", () => {
+    const options = splitList(control.value).slice(0, 30);
+    row.address_options = options;
+    row.address_as = options[0] || "";
+  });
+  return control;
+}
+
+function dynamicAddressFor(row, groupId) {
+  const scope = String(groupId || row.group_id || "");
+  return state.dynamicAddressOverrides.find((item) => (
+    item.source_bot_id === row.source_bot_id
+    && item.target_bot_id === row.target_bot_id
+    && String(item.group_id || "") === scope
+  ));
 }
 
 function participants() {
@@ -100,10 +140,9 @@ function participants() {
 
 function participantLabel(nodeId) {
   const node = participants().find((item) => item.node_id === nodeId);
-  if (!node) return nodeId || "未选择";
+  if (!node) return "未选择";
   const type = node.node_type === "bot" ? "Bot" : "用户";
-  const account = node.account_id ? ` · ${node.account_id}` : "";
-  return `${node.display_name || node.node_id} (${node.node_id}${account}) · ${type}`;
+  return `${node.display_name || "未命名"} · ${type}`;
 }
 
 function makeField(labelText, control, className = "field") {
@@ -346,7 +385,7 @@ function renderDiscovery() {
     const button = document.createElement("button");
     button.className = "button button-secondary button-small";
     button.type = "button";
-    button.disabled = state.loading || state.saving || state.autofilling || state.personaAdapting || state.discoveryLoading;
+    button.disabled = isBusy() || state.discoveryLoading;
     button.textContent = candidate.duplicate_of_platform_id
       ? "同账号已归并"
       : candidate.sync_needed
@@ -419,6 +458,7 @@ function makeNodeCard(node, nodeType, index) {
     makeField(isBot ? "Bot ID" : "用户节点 ID", nodeIdControl(node, isBot ? "bot_id" : "user_id")),
     makeField("显示名称", textControl(node, "display_name", { maxLength: 80 })),
     makeField("平台账号 ID", textControl(node, "account_id", { maxLength: 128 })),
+    makeField("账号 ID 列表", textControl(node, "account_ids", { list: true, placeholder: "平台账号/OpenID，多个用逗号分隔" })),
   );
   if (isBot) {
     body.append(
@@ -457,11 +497,27 @@ function configuredGroupIds() {
   return [...values].sort((left, right) => left.localeCompare(right, "zh-CN", { numeric: true }));
 }
 
+function groupMappingStatus(groupId) {
+  if (!groupId) return { mapped: 0, total: state.bots.length, missing: [] };
+  const mappedBotIds = new Set(
+    state.groupBindings
+      .filter((row) => String(row.group_id || "") === groupId && String(row.platform_group_id || "").trim())
+      .map((row) => row.bot_id),
+  );
+  const missing = state.bots
+    .filter((bot) => !mappedBotIds.has(bot.bot_id))
+    .map((bot) => bot.display_name || "未命名 Bot");
+  return { mapped: state.bots.length - missing.length, total: state.bots.length, missing };
+}
+
 function renderScopeSelect(control, currentValue) {
   const options = [{ value: "", label: "全局默认" }];
-  for (const groupId of configuredGroupIds()) options.push({ value: groupId, label: `群 ${groupId}` });
+  for (const groupId of configuredGroupIds()) {
+    const mapping = groupMappingStatus(groupId);
+    options.push({ value: groupId, label: `${groupId} · 平台地址 ${mapping.mapped}/${mapping.total}` });
+  }
   if (currentValue && !options.some((item) => item.value === currentValue)) {
-    options.push({ value: currentValue, label: `群 ${currentValue}` });
+    options.push({ value: currentValue, label: currentValue });
   }
   control.replaceChildren(...options.map((item) => {
     const option = document.createElement("option");
@@ -473,7 +529,23 @@ function renderScopeSelect(control, currentValue) {
 }
 
 function defaultPersonaPrompt(bot) {
-  return `你是 ${bot.display_name || bot.bot_id}（bot_id=${bot.bot_id}）。请按照这里补充人格、表达方式和边界。`;
+  return `你是 ${bot.display_name || bot.bot_id}（bot_id=${bot.bot_id}）。请在这里补充身份、性格、情绪方式、表达习惯和行为边界。`;
+}
+
+function profileFieldValue(profile, field) {
+  if (!profile) return "";
+  if (field === "personality_prompt") {
+    if (Object.prototype.hasOwnProperty.call(profile, "personality_prompt")) {
+      return String(profile.personality_prompt || "");
+    }
+    return String(profile.system_prompt || "");
+  }
+  return String(profile.worldview_prompt || "");
+}
+
+function profileIdentityValue(profile, field) {
+  if (!profile) return "";
+  return String(profile[field] || "");
 }
 
 function makePersonaRow(bot, groupId) {
@@ -488,9 +560,9 @@ function makePersonaRow(bot, groupId) {
   const identityCell = document.createElement("th");
   identityCell.scope = "row";
   const botName = document.createElement("strong");
-  botName.textContent = bot.display_name || bot.bot_id;
+  botName.textContent = bot.display_name || "未命名 Bot";
   const botId = document.createElement("small");
-  botId.textContent = `${bot.bot_id}${bot.account_id ? ` · ${bot.account_id}` : ""}`;
+  botId.textContent = bot.account_id ? "Bot · 已绑定平台账号" : "Bot · 未绑定平台账号";
   identityCell.append(botName, botId);
 
   const mappingCell = document.createElement("td");
@@ -551,13 +623,82 @@ function makePersonaRow(bot, groupId) {
   sourceBadge.className = "config-source";
   sourceCell.append(sourceBadge);
 
-  const promptCell = document.createElement("td");
-  const prompt = document.createElement("textarea");
-  prompt.className = "control persona-table-prompt";
-  prompt.maxLength = 50000;
-  prompt.placeholder = "填写该 Bot 的身份、性格、表达方式与边界；留空表示尚未配置。";
-  prompt.value = exact?.system_prompt || globalProfile?.system_prompt || "";
-  promptCell.append(prompt);
+  const identityStateCell = document.createElement("td");
+  identityStateCell.className = "persona-identity-state";
+  const identityFields = [
+    ["self_identity", "当前自我", "我是谁"],
+    ["soul_identity", "灵魂/操控者", "真正操控当前账号的人格"],
+    ["body_identity", "身体身份", "当前使用的身体"],
+    ["memory_key", "记忆身份键", "主观记忆跟随的稳定人物，如：蔚来"],
+  ];
+  for (const [field, labelText, placeholder] of identityFields) {
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    const input = document.createElement("input");
+    input.className = "control identity-state-input";
+    input.maxLength = 160;
+    input.placeholder = placeholder;
+    input.value = profileIdentityValue(exact, field)
+      || profileIdentityValue(globalProfile, field);
+    input.addEventListener("input", () => {
+      if (!exact) createExact("", "");
+      exact[field] = input.value;
+    });
+    label.append(input);
+    identityStateCell.append(label);
+  }
+  const noteLabel = document.createElement("label");
+  noteLabel.textContent = "身份说明";
+  const identityNote = document.createElement("textarea");
+  identityNote.className = "control identity-state-note";
+  identityNote.maxLength = 1000;
+  identityNote.placeholder = "例如：这是灵魂互换群，账号名只是身体/路由标签";
+  identityNote.value = profileIdentityValue(exact, "identity_note")
+    || profileIdentityValue(globalProfile, "identity_note");
+  identityNote.addEventListener("input", () => {
+    if (!exact) createExact("", "");
+    exact.identity_note = identityNote.value;
+  });
+  noteLabel.append(identityNote);
+  identityStateCell.append(noteLabel);
+  const lockLabel = document.createElement("label");
+  lockLabel.textContent = "历史覆盖策略";
+  const identityLocked = document.createElement("select");
+  identityLocked.className = "control identity-lock-select";
+  if (groupId) {
+    identityLocked.innerHTML = '<option value="inherit">继承全局</option><option value="true">防历史覆盖</option><option value="false">允许历史影响</option>';
+    identityLocked.value = exact && Object.prototype.hasOwnProperty.call(exact, "identity_locked")
+      ? String(exact.identity_locked !== false)
+      : "inherit";
+  } else {
+    identityLocked.innerHTML = '<option value="true">防历史覆盖</option><option value="false">允许历史影响</option>';
+    identityLocked.value = String(!exact || exact.identity_locked !== false);
+  }
+  identityLocked.addEventListener("change", () => {
+    if (!exact) createExact("", "");
+    if (identityLocked.value === "inherit") delete exact.identity_locked;
+    else exact.identity_locked = identityLocked.value === "true";
+  });
+  lockLabel.append(identityLocked);
+  identityStateCell.append(lockLabel);
+
+  const personalityCell = document.createElement("td");
+  const personalityPrompt = document.createElement("textarea");
+  personalityPrompt.className = "control persona-table-prompt";
+  personalityPrompt.maxLength = 50000;
+  personalityPrompt.placeholder = "身份、性格、情绪方式、表达习惯与行为边界";
+  personalityPrompt.value = profileFieldValue(exact, "personality_prompt")
+    || profileFieldValue(globalProfile, "personality_prompt");
+  personalityCell.append(personalityPrompt);
+
+  const worldviewCell = document.createElement("td");
+  const worldviewPrompt = document.createElement("textarea");
+  worldviewPrompt.className = "control persona-table-prompt";
+  worldviewPrompt.maxLength = 50000;
+  worldviewPrompt.placeholder = "所处世界、经历事实、价值判断与认知框架";
+  worldviewPrompt.value = profileFieldValue(exact, "worldview_prompt")
+    || profileFieldValue(globalProfile, "worldview_prompt");
+  worldviewCell.append(worldviewPrompt);
 
   const actionCell = document.createElement("td");
   actionCell.className = "persona-actions";
@@ -570,7 +711,7 @@ function makePersonaRow(bot, groupId) {
     aiAction.type = "button";
     aiAction.className = "button button-secondary button-small";
     aiAction.textContent = "AI 从全局改写";
-    aiAction.disabled = !globalProfile || state.loading || state.saving || state.autofilling || state.personaAdapting;
+    aiAction.disabled = !globalProfile || isBusy();
     aiAction.title = globalProfile ? "生成该 Bot 的群专属人格与群内称呼草稿" : "请先填写该 Bot 的全局人格";
     aiAction.addEventListener("click", () => void adaptPersonas([bot.bot_id]));
     actionCell.append(aiAction);
@@ -587,20 +728,27 @@ function makePersonaRow(bot, groupId) {
       : (groupId ? "建立群专属" : "建立全局人格");
   }
 
-  function createExact(value) {
+  function createExact(personalityValue = "", worldviewValue = "") {
     exact = {
       __template_key: "persona_profile",
       bot_id: bot.bot_id,
       group_id: groupId,
-      system_prompt: value,
+      personality_prompt: personalityValue,
+      worldview_prompt: worldviewValue,
     };
     state.personaProfiles.push(exact);
     updatePresentation();
   }
 
-  prompt.addEventListener("input", () => {
-    if (!exact) createExact(prompt.value);
-    else exact.system_prompt = prompt.value;
+  personalityPrompt.addEventListener("input", () => {
+    if (!exact) createExact(personalityPrompt.value, "");
+    else exact.personality_prompt = personalityPrompt.value;
+    delete exact.system_prompt;
+  });
+  worldviewPrompt.addEventListener("input", () => {
+    if (!exact) createExact("", worldviewPrompt.value);
+    else exact.worldview_prompt = worldviewPrompt.value;
+    delete exact.system_prompt;
   });
   action.addEventListener("click", () => {
     if (exact) {
@@ -610,14 +758,16 @@ function makePersonaRow(bot, groupId) {
       setStatus(groupId ? `${bot.display_name || bot.bot_id} 已改为继承全局人格；保存后生效。` : `${bot.display_name || bot.bot_id} 的全局人格已移除；保存后生效。`);
       return;
     }
-    const initial = globalProfile?.system_prompt || defaultPersonaPrompt(bot);
-    createExact(initial);
-    prompt.value = initial;
-    prompt.focus();
+    const initialPersonality = profileFieldValue(globalProfile, "personality_prompt") || defaultPersonaPrompt(bot);
+    const initialWorldview = profileFieldValue(globalProfile, "worldview_prompt");
+    createExact(initialPersonality, initialWorldview);
+    personalityPrompt.value = initialPersonality;
+    worldviewPrompt.value = initialWorldview;
+    personalityPrompt.focus();
   });
 
   updatePresentation();
-  tr.append(identityCell, mappingCell, sourceCell, promptCell, actionCell);
+  tr.append(identityCell, mappingCell, sourceCell, identityStateCell, personalityCell, worldviewCell, actionCell);
   return tr;
 }
 
@@ -627,10 +777,11 @@ function renderPersonas() {
   elements.personaAdaptCard.hidden = !groupId;
   elements.personaAdaptAll.disabled = !groupId
     || !state.bots.some((bot) => state.personaProfiles.some((row) => row.bot_id === bot.bot_id && !row.group_id))
-    || state.loading || state.saving || state.autofilling || state.personaAdapting;
+    || isBusy();
+  const mapping = groupMappingStatus(groupId);
   elements.personaScopeNote.textContent = groupId
-    ? `正在配置逻辑群“${groupId}”。每个 Bot 的平台群 ID 可以不同；映射完成后，它们会使用同一套群人格与关系。`
-    : "正在配置全局默认人格。群聊没有专属覆盖时，会使用这里的内容。";
+    ? `正在配置“${groupId}”。群专属人格留空会继续继承全局人格。平台群地址已登记 ${mapping.mapped}/${mapping.total}${mapping.missing.length ? `；尚未登记：${mapping.missing.join("、")}` : "；地址完整"}。`
+    : "正在配置全局默认人格。任何群聊未填写专属人格时，都会继承这里的内容。";
   if (!state.bots.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
@@ -642,7 +793,7 @@ function renderPersonas() {
   tableWrap.className = "config-table-wrap";
   const table = document.createElement("table");
   table.className = "config-table persona-table";
-  table.innerHTML = "<thead><tr><th>机器人</th><th>该 Bot 的平台群 ID</th><th>人格来源</th><th>System Prompt</th><th>操作</th></tr></thead>";
+  table.innerHTML = "<thead><tr><th>Bot 称呼</th><th>平台群地址（仅路由）</th><th>人格来源</th><th>当前自我 / 灵魂 / 身体</th><th>人格与表达</th><th>世界观与认知框架</th><th>操作</th></tr></thead>";
   const tbody = document.createElement("tbody");
   tbody.append(...state.bots.map((bot) => makePersonaRow(bot, groupId)));
   table.append(tbody);
@@ -690,7 +841,7 @@ function makeRelationCard(entry, groupId) {
   direction.append(source, arrow, target);
   const scope = document.createElement("span");
   scope.className = "node-badge";
-  scope.textContent = inherited ? "继承全局" : row.group_id ? `群 ${row.group_id}` : "全局";
+  scope.textContent = inherited ? "继承全局" : row.group_id ? row.group_id : "全局";
   direction.append(scope);
   const remove = document.createElement("button");
   remove.className = "delete-button";
@@ -699,7 +850,7 @@ function makeRelationCard(entry, groupId) {
   remove.addEventListener("click", () => {
     if (inherited) {
       state.relations.push({ ...row, group_id: groupId });
-      setStatus(`${row.source_bot_id} → ${row.target_bot_id} 已建立群 ${groupId} 专属关系；保存后生效。`);
+      setStatus(`${participantLabel(row.source_bot_id)} → ${participantLabel(row.target_bot_id)} 已建立“${groupId}”专属关系；保存后生效。`);
     } else {
       state.relations.splice(index, 1);
     }
@@ -713,14 +864,42 @@ function makeRelationCard(entry, groupId) {
     makeField("关系发起方", participantSelect(row, "source_bot_id", index), "field field-wide"),
     makeField("关系目标", participantSelect(row, "target_bot_id", index), "field field-wide"),
     makeField("关系类型", textControl(row, "relation_type", { maxLength: 80 })),
-    makeField("对目标的称呼", textControl(row, "address_as", { maxLength: 80 })),
+    makeField(
+      "所有可能称呼（每行一个，首行为默认）",
+      addressLibraryControl(row),
+      "field field-wide",
+    ),
     makeField("旁听候选权重", numberControl(row, "interject_priority", 0.01, 100, 0.1)),
     makeField("信任度（0–1）", numberControl(row, "trust", 0, 1, 0.05)),
     makeField("熟悉度（0–1）", numberControl(row, "familiarity", 0, 1, 0.05)),
     makeField("好感度（-1–1）", numberControl(row, "affinity", -1, 1, 0.05)),
     makeField("浪漫兴趣（0–1）", numberControl(row, "romantic_interest", 0, 1, 0.05)),
     makeField("面对目标时的语气", textControl(row, "tone", { multiline: true, maxLength: 500 }), "field field-full"),
+    makeField(
+      "发起方对目标的看法 / 认识（有方向）",
+      textControl(row, "view_of_target", {
+        multiline: true,
+        maxLength: 3000,
+        placeholder: "写明已经知道的事实、印象、判断、情绪和主观看法；不要替目标表态",
+      }),
+      "field field-full relation-view-field",
+    ),
   );
+  const dynamicAddress = dynamicAddressFor(row, groupId);
+  if (dynamicAddress) {
+    const review = document.createElement("div");
+    review.className = "dynamic-address-review field-full";
+    const note = document.createElement("span");
+    note.textContent = `当前动态选用：${dynamicAddress.address_as_override}`;
+    if (dynamicAddress.last_reason) note.title = dynamicAddress.last_reason;
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "button button-secondary button-small";
+    reset.textContent = "恢复首行默认称呼";
+    reset.addEventListener("click", () => void resetDynamicAddress(row, groupId));
+    review.append(note, reset);
+    body.append(review);
+  }
   const toggles = document.createElement("div");
   toggles.className = "toggle-grid";
   toggles.append(
@@ -767,7 +946,7 @@ function renderRelations() {
   const groupId = state.activeGroupId;
   renderScopeSelect(elements.relationGroupScope, groupId);
   elements.relationScopeNote.textContent = groupId
-    ? `正在查看逻辑群“${groupId}”的有效关系。“继承全局”的卡片只读，点击“建立群专属”后可修改。`
+    ? `正在查看“${groupId}”的有效关系。关系未覆盖时继承全局；Bot 人格也可独立留空并继承全局。`
     : "正在配置全局默认关系。群聊没有同方向专属关系时，会继承这里的关系。";
   const cards = relationEntriesForGroup(groupId).map((entry) => makeRelationCard(entry, groupId));
   elements.relationList.replaceChildren(...cards);
@@ -777,12 +956,12 @@ function renderRelations() {
     empty.innerHTML = `<h3>这个范围还没有关系</h3><p>${groupId ? "可新增群专属关系；没有覆盖的方向会继续使用全局默认。" : "至少添加两个参与者后创建一条有向关系。"}</p>`;
     elements.relationList.append(empty);
   }
-  elements.addRelation.disabled = participants().length < 2 || state.loading || state.saving || state.autofilling || state.personaAdapting;
+  elements.addRelation.disabled = participants().length < 2 || isBusy();
 }
 
 function settingOptions(type) {
   if (type === "bot_select") {
-    return state.bots.map((bot) => ({ value: bot.bot_id, label: `${bot.display_name || bot.bot_id} (${bot.bot_id})` }));
+    return state.bots.map((bot) => ({ value: bot.bot_id, label: bot.display_name || "未命名 Bot" }));
   }
   if (type === "provider_select") return optionList(state.providers);
   return [];
@@ -802,13 +981,18 @@ function makeSettingField(spec) {
       : key === "fallback_shared_secret" && state.fallbackSharedSecretConfigured;
     control = textControl(state.settings, key, {
       type: spec.type === "secret" ? "password" : "text",
+      multiline: spec.type === "textarea",
       placeholder: spec.type === "secret" && secretConfigured
         ? (key === "fallback_shared_secret" ? "已设置；留空保持，输入 CLEAR 清除" : "已设置；留空保持原值")
         : "",
-      maxLength: 256,
+      maxLength: spec.max_length || 256,
     });
   }
-  return makeField(spec.label, control, "field settings-field");
+  return makeField(
+    spec.label,
+    control,
+    `field settings-field${spec.type === "textarea" ? " settings-field-wide" : ""}`,
+  );
 }
 
 function renderSettings() {
@@ -842,7 +1026,12 @@ function renderAutofillProvider() {
   const current = options.some((item) => item.value === configured)
     ? configured
     : options[0]?.value || "";
-  for (const control of [elements.autofillProvider, elements.personaAdaptProvider]) {
+  for (const control of [
+    elements.autofillProvider,
+    elements.personaAdaptProvider,
+    elements.promptFieldProvider,
+    elements.relationViewProvider,
+  ]) {
     control.replaceChildren();
     for (const item of options) {
       const option = document.createElement("option");
@@ -872,11 +1061,13 @@ function renderHeader() {
   elements.nodeCount.textContent = String(total);
   elements.summary.textContent = `${state.bots.length} 个 Bot · ${state.users.length} 个普通用户 · ${state.groupScopes.length} 个逻辑群 · ${state.personaProfiles.length} 条人格 · ${state.relations.length} 条关系`;
   const self = state.bots.find((bot) => bot.bot_id === state.settings.self_bot_id);
-  elements.selfBot.textContent = `本机 Bot：${self ? `${self.display_name} (${self.bot_id})` : state.settings.self_bot_id || "未设置"}`;
-  for (const button of [elements.reload, elements.save, elements.addBot, elements.addUser, elements.addRelation, elements.createPersonaGroup, elements.createRelationGroup, elements.renamePersonaGroup, elements.renameRelationGroup, elements.deletePersonaGroup, elements.deleteRelationGroup, elements.importAll, elements.autofill, elements.personaAdaptAll]) {
-    button.disabled = state.loading || state.saving || state.autofilling || state.personaAdapting
+  elements.selfBot.textContent = `本机 Bot：${self ? self.display_name || "未命名 Bot" : "未设置"}`;
+  for (const button of [elements.reload, elements.save, elements.addBot, elements.addUser, elements.addRelation, elements.createPersonaGroup, elements.createRelationGroup, elements.renamePersonaGroup, elements.renameRelationGroup, elements.deletePersonaGroup, elements.deleteRelationGroup, elements.importAll, elements.autofill, elements.personaAdaptAll, elements.personalityAutofillAll, elements.identityAutofillAll, elements.worldviewAutofillAll, elements.relationViewAutofillAll]) {
+    button.disabled = isBusy()
       || (button === elements.importAll && state.discoveryLoading)
-      || (button === elements.autofill && state.bots.length === 0);
+      || (button === elements.autofill && state.bots.length === 0)
+      || ([elements.personalityAutofillAll, elements.identityAutofillAll, elements.worldviewAutofillAll].includes(button) && state.bots.length === 0)
+      || (button === elements.relationViewAutofillAll && relationEntriesForGroup(state.activeGroupId).length === 0);
   }
   const hasActiveGroup = Boolean(state.activeGroupId);
   for (const button of [elements.renamePersonaGroup, elements.renameRelationGroup, elements.deletePersonaGroup, elements.deleteRelationGroup]) {
@@ -916,8 +1107,10 @@ function emptyRelation(sourceId, targetId) {
     allow_ask: true,
     trust: 0.5,
     tone: "",
+    view_of_target: "",
     share_context: false,
     address_as: "",
+    address_options: [],
     familiarity: 0,
     affinity: 0,
     romantic_interest: 0,
@@ -952,6 +1145,14 @@ function validateWorkspace() {
     if (ids.has(node.node_id)) throw new Error(`节点 ID 重复：${node.node_id}`);
     if (!isPlaceholderAccountId(node.account_id) && accounts.has(node.account_id)) {
       throw new Error(`平台账号重复：${node.account_id}`);
+    }
+    const extraAccounts = Array.isArray(node.account_ids) ? node.account_ids : [];
+    for (const extra of extraAccounts) {
+      const value = String(extra || "").trim();
+      if (!value) throw new Error(`${node.node_id} 的账号 ID 列表包含空项。`);
+      if (value.length > 128) throw new Error(`${node.node_id} 的账号 ID 超过 128 个字符。`);
+      if (accounts.has(value)) throw new Error(`平台账号重复：${value}`);
+      accounts.add(value);
     }
     if (node.node_type === "bot" && node.platform_id) {
       if (platforms.has(node.platform_id)) throw new Error(`AstrBot 平台 ID 重复：${node.platform_id}`);
@@ -990,9 +1191,15 @@ function validateWorkspace() {
     if (!botIds.has(row.bot_id)) throw new Error(`第 ${index + 1} 条人格引用了不存在的 Bot。`);
     if (String(row.group_id || "").length > 128) throw new Error(`第 ${index + 1} 条人格的群 ID 过长。`);
     if (row.group_id && !scopeIds.has(String(row.group_id))) throw new Error(`第 ${index + 1} 条人格引用了不存在的逻辑群。`);
-    const prompt = String(row.system_prompt || "").trim();
-    if (!prompt) throw new Error(`第 ${index + 1} 条人格内容不能为空。`);
-    if (prompt.length > 50000) throw new Error(`第 ${index + 1} 条人格不能超过 50000 个字符。`);
+    const personality = profileFieldValue(row, "personality_prompt").trim();
+    const worldview = profileFieldValue(row, "worldview_prompt").trim();
+    const identityValues = ["self_identity", "soul_identity", "body_identity", "memory_key", "identity_note"]
+      .map((field) => profileIdentityValue(row, field).trim());
+    if (!personality && !worldview && !identityValues.some(Boolean)) throw new Error(`第 ${index + 1} 条人格、世界观和身份不能同时为空。`);
+    if (personality.length > 50000) throw new Error(`第 ${index + 1} 条人格提示词不能超过 50000 个字符。`);
+    if (worldview.length > 50000) throw new Error(`第 ${index + 1} 条世界观提示词不能超过 50000 个字符。`);
+    if (identityValues.slice(0, 4).some((value) => value.length > 160)) throw new Error(`第 ${index + 1} 条结构化身份字段和记忆键不能超过 160 个字符。`);
+    if (identityValues[4].length > 1000) throw new Error(`第 ${index + 1} 条身份说明不能超过 1000 个字符。`);
     const key = `${row.bot_id}\u0000${row.group_id || ""}`;
     if (personaKeys.has(key)) throw new Error(`人格重复：${row.bot_id}（${row.group_id ? `群 ${row.group_id}` : "全局"}）`);
     personaKeys.add(key);
@@ -1003,6 +1210,7 @@ function validateWorkspace() {
     if (row.source_bot_id === row.target_bot_id) throw new Error(`第 ${index + 1} 条关系不能指向自己。`);
     if (String(row.group_id || "").length > 128) throw new Error(`第 ${index + 1} 条关系的群 ID 过长。`);
     if (row.group_id && !scopeIds.has(String(row.group_id))) throw new Error(`第 ${index + 1} 条关系引用了不存在的逻辑群。`);
+    if (String(row.view_of_target || "").length > 3000) throw new Error(`第 ${index + 1} 条关系的看法/认识不能超过 3000 个字符。`);
     const key = `${row.source_bot_id}\u0000${row.target_bot_id}\u0000${row.group_id || ""}`;
     if (relations.has(key)) throw new Error(`关系重复：${row.source_bot_id} → ${row.target_bot_id}（${row.group_id ? `群 ${row.group_id}` : "全局"}）`);
     relations.add(key);
@@ -1019,6 +1227,7 @@ function loadPayload(payload) {
     state.activeGroupId = "";
   }
   state.observedGroupBindings = Array.isArray(payload?.observed_group_bindings) ? payload.observed_group_bindings : [];
+  state.dynamicAddressOverrides = Array.isArray(payload?.dynamic_address_overrides) ? payload.dynamic_address_overrides : [];
   state.settings = payload?.settings && typeof payload.settings === "object" ? payload.settings : {};
   state.settingSpecs = Array.isArray(payload?.setting_specs) ? payload.setting_specs : [];
   state.personaProfiles = Array.isArray(payload?.persona_profiles) ? payload.persona_profiles : [];
@@ -1033,6 +1242,21 @@ function loadPayload(payload) {
   state.sharedSecretConfigured = Boolean(payload?.shared_secret_configured);
   state.fallbackSharedSecretConfigured = Boolean(payload?.fallback_shared_secret_configured);
   reconcileDiscovery();
+}
+
+async function resetDynamicAddress(row, groupId) {
+  try {
+    const payload = await bridge.apiPost("workspace/dynamic-address/reset", {
+      source_bot_id: row.source_bot_id,
+      target_bot_id: row.target_bot_id,
+      group_id: String(groupId || row.group_id || ""),
+    });
+    loadPayload(payload);
+    renderAll();
+    setStatus("已恢复为称呼库首行的默认称呼；其他动态关系状态保持不变。", "success");
+  } catch (error) {
+    setStatus(`恢复默认称呼失败：${error.message}`, "error");
+  }
 }
 
 async function loadWorkspace() {
@@ -1160,6 +1384,115 @@ async function autofillWorkspace() {
   }
 }
 
+function wait(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function runFieldAutofillJob(body, label) {
+  const started = await bridge.apiPost("workspace/field-autofill/start", body);
+  const taskId = String(started?.task_id || "");
+  if (!taskId) throw new Error("服务器没有返回分栏任务 ID");
+
+  let pollDelay = Number(started?.poll_after_ms) || 1200;
+  let networkFailures = 0;
+  const deadline = Date.now() + (20 * 60 * 1000);
+  while (Date.now() < deadline) {
+    await wait(Math.max(500, Math.min(pollDelay, 5000)));
+    let job;
+    try {
+      job = await bridge.apiPost("workspace/field-autofill/status", {
+        task_id: taskId,
+      });
+      networkFailures = 0;
+    } catch (error) {
+      networkFailures += 1;
+      if (networkFailures >= 8) {
+        throw new Error(`查询后台任务连续失败：${error.message}`);
+      }
+      setStatus(
+        `${label}仍在服务器后台运行；页面连接暂时不稳定，正在重试查询（${networkFailures}/8）…`,
+      );
+      pollDelay = Math.min(5000, pollDelay + 800);
+      continue;
+    }
+
+    pollDelay = Number(job?.poll_after_ms) || 1200;
+    if (job?.status === "succeeded") {
+      if (!job.result || typeof job.result !== "object") {
+        throw new Error("后台任务已完成，但没有返回可用草稿");
+      }
+      return job.result;
+    }
+    if (job?.status === "failed") {
+      throw new Error(job.error || job.message || "后台分栏任务失败");
+    }
+    setStatus(job?.message || `${label}正在服务器后台生成…`);
+  }
+  throw new Error("等待后台分栏任务超过 20 分钟，请重新打开页面查询或稍后重试");
+}
+
+async function autofillSplitField(kind, botIds = [], directions = []) {
+  try {
+    validateWorkspace();
+  } catch (error) {
+    setStatus(error.message, "error");
+    return;
+  }
+  const relationMode = kind === "relation_view";
+  const providerId = relationMode
+    ? (elements.relationViewProvider.value || "")
+    : (elements.promptFieldProvider.value || "");
+  const instruction = relationMode
+    ? (elements.relationViewInstruction.value || "")
+    : (elements.promptFieldInstruction.value || "");
+  const labels = {
+    personality: "人格、身份与表达方式",
+    identity: "结构化身份与稳定记忆键",
+    worldview: "世界观、经历与认知框架",
+    relation_view: "对目标的看法 / 认识",
+  };
+  state.fieldAutofilling = true;
+  renderAll();
+  setStatus(`正在创建“${labels[kind]}”后台任务；只会更新这个分栏…`);
+  try {
+    const payload = await runFieldAutofillJob({
+      kind,
+      bots: state.bots,
+      users: state.users,
+      persona_profiles: state.personaProfiles,
+      relations: state.relations,
+      provider_id: providerId,
+      group_id: state.activeGroupId,
+      bot_ids: botIds,
+      directions: directions.map(([source_bot_id, target_bot_id]) => ({ source_bot_id, target_bot_id })),
+      instruction,
+    }, labels[kind]);
+    state.personaProfiles = Array.isArray(payload?.persona_profiles)
+      ? payload.persona_profiles
+      : state.personaProfiles;
+    state.relations = Array.isArray(payload?.relations)
+      ? payload.relations
+      : state.relations;
+    const personaCount = Array.isArray(payload?.updated_bot_ids) ? payload.updated_bot_ids.length : 0;
+    const relationCount = Array.isArray(payload?.updated_relations) ? payload.updated_relations.length : 0;
+    const notes = Array.isArray(payload?.notes) && payload.notes.length
+      ? `；注意：${payload.notes.join("；")}`
+      : "";
+    state.currentTab = relationMode ? "relations" : "personas";
+    setStatus(
+      relationMode
+        ? `AI 草稿已生成：更新 ${relationCount} 条有向关系的看法/认识。请检查后点击“保存全部”${notes}`
+        : `AI 草稿已生成：更新 ${personaCount} 个 Bot 的${labels[kind]}。请检查后点击“保存全部”${notes}`,
+      "success",
+    );
+  } catch (error) {
+    setStatus(`AI 分栏填写失败：${error.message}`, "error");
+  } finally {
+    state.fieldAutofilling = false;
+    renderAll();
+  }
+}
+
 async function adaptPersonas(botIds) {
   const groupId = state.activeGroupId;
   if (!groupId) {
@@ -1231,11 +1564,33 @@ elements.autofillProvider.addEventListener("change", () => {
 elements.personaAdaptProvider.addEventListener("change", () => {
   state.settings.autofill_provider_id = elements.personaAdaptProvider.value;
 });
+elements.promptFieldProvider.addEventListener("change", () => {
+  state.settings.autofill_provider_id = elements.promptFieldProvider.value;
+});
+elements.relationViewProvider.addEventListener("change", () => {
+  state.settings.autofill_provider_id = elements.relationViewProvider.value;
+});
 elements.personaAdaptAll.addEventListener("click", () => {
   const botIds = state.bots
     .filter((bot) => state.personaProfiles.some((row) => row.bot_id === bot.bot_id && !row.group_id))
     .map((bot) => bot.bot_id);
   void adaptPersonas(botIds);
+});
+elements.personalityAutofillAll.addEventListener("click", () => {
+  void autofillSplitField("personality", state.bots.map((bot) => bot.bot_id));
+});
+elements.identityAutofillAll.addEventListener("click", () => {
+  void autofillSplitField("identity", state.bots.map((bot) => bot.bot_id));
+});
+elements.worldviewAutofillAll.addEventListener("click", () => {
+  void autofillSplitField("worldview", state.bots.map((bot) => bot.bot_id));
+});
+elements.relationViewAutofillAll.addEventListener("click", () => {
+  const directions = relationEntriesForGroup(state.activeGroupId).map(({ row }) => [
+    row.source_bot_id,
+    row.target_bot_id,
+  ]);
+  void autofillSplitField("relation_view", [], directions);
 });
 elements.importAll.addEventListener("click", () => {
   let count = 0;
@@ -1252,12 +1607,12 @@ elements.importAll.addEventListener("click", () => {
   );
 });
 elements.addBot.addEventListener("click", () => {
-  state.bots.push({ __template_key: "bot", bot_id: uniqueNodeId("new_bot"), display_name: "新 Bot", account_id: "", platform_id: "", description: "", capabilities: [], aliases: [] });
+  state.bots.push({ __template_key: "bot", bot_id: uniqueNodeId("new_bot"), display_name: "新 Bot", account_id: "", account_ids: [], platform_id: "", description: "", capabilities: [], aliases: [] });
   state.currentTab = "nodes";
   renderParticipantChanges();
 });
 elements.addUser.addEventListener("click", () => {
-  state.users.push({ __template_key: "user", user_id: uniqueNodeId("user"), display_name: "普通用户", account_id: "", description: "", aliases: [] });
+  state.users.push({ __template_key: "user", user_id: uniqueNodeId("user"), display_name: "普通用户", account_id: "", account_ids: [], description: "", aliases: [] });
   state.currentTab = "nodes";
   renderParticipantChanges();
 });
