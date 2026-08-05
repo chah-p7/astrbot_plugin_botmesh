@@ -436,6 +436,63 @@ class PluginWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         context = _PluginContext()
         return plugin_main.BotMeshPlugin(context, config), context, config
 
+    async def test_proactive_send_review_preserves_safe_natural_prose(self):
+        plugin, _context, _config = self.make_plugin()
+        bot = plugin_main.BotNode(
+            bot_id="bot_a",
+            display_name="小A",
+            account_id="10001",
+            platform_id="onebot_main",
+        )
+        system_prompt = plugin._build_proactive_dispatch_system_prompt(
+            bot,
+            "",
+            "你是小A。",
+            {},
+            None,
+        )
+        user_prompt = plugin._build_proactive_dispatch_user_prompt(
+            trigger={},
+            local_history=[],
+            persistent_history="",
+            recent_topics=[],
+            generation_options={},
+            target_candidates={},
+        )
+        render_options = {
+            "target_candidates": {},
+            "group_id": "",
+            "identity_terms": ["莉芙"],
+        }
+
+        narrative = plugin._render_proactive_dispatch(
+            '{"audience":"group","message":"莉芙的长头发又缠住梳子了。"}',
+            **render_options,
+        )
+        plain_text = plugin._render_proactive_dispatch(
+            "刚才忽然想起一件小事，心里有点说不上来的感觉。",
+            **render_options,
+        )
+        clear_addressee = plugin._render_proactive_dispatch(
+            '{"audience":"group","message":"莉芙，明天一起出去走走。"}',
+            **render_options,
+        )
+        broken_json = plugin._render_proactive_dispatch(
+            '{"audience":"group","message":"不完整"',
+            **render_options,
+        )
+
+        self.assertEqual(narrative[0], "莉芙的长头发又缠住梳子了。")
+        self.assertEqual(narrative[3], "group")
+        self.assertEqual(plain_text[0], "刚才忽然想起一件小事，心里有点说不上来的感觉。")
+        self.assertEqual(plain_text[3], "plain_text_group")
+        self.assertEqual(clear_addressee[3], "group_identity_term_fallback")
+        self.assertNotIn("？", clear_addressee[0])
+        self.assertEqual(broken_json[3], "malformed_schema_fallback")
+        self.assertNotIn("？", broken_json[0])
+        self.assertIn("主动发言不要求提问", system_prompt)
+        self.assertIn("可以是陈述句或问句", user_prompt)
+
     async def test_qqofficial_proactive_route_requires_new_delivery_receipt(self):
         plugin, context, _config = self.make_plugin()
         platform = _Platform("qq_main", "qq_official")
