@@ -1,4 +1,10 @@
 {
+  "timezone": {
+    "description": "对话时间判断使用的 IANA 时区",
+    "type": "string",
+    "default": "Asia/Shanghai",
+    "hint": "例如 Asia/Shanghai、Asia/Tokyo、UTC。相对时间会以此时区的当前时间为准。"
+  },
   "self_bot_id": {
     "description": "默认/备用本机 Bot ID",
     "type": "string",
