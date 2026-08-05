@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib
 import inspect
@@ -14,6 +15,11 @@ from collections import deque
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python 3.8 fallback
+    ZoneInfo = None  # type: ignore[assignment,misc]
 
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, FunctionTool, ToolSet, logger
@@ -99,8 +105,15 @@ FIELD_AUTOFILL_MAX_ACTIVE_JOBS = 4
 FIELD_AUTOFILL_MAX_RETAINED_JOBS = 24
 MULTI_MENTION_COORDINATION_CACHE_SECONDS = 3 * 60
 MULTI_MENTION_COORDINATION_MAX_RETAINED_JOBS = 64
+DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_PERSONA_REINFORCEMENT_PROMPT = """始终把前面的人格、身份与世界观当作你稳定而连续的自我认知，而不是临时表演任务。先从这个人的经历、立场、关系、情绪与习惯出发理解当下，再形成自己的判断和回应；在不同话题中保持姓名、自称、价值取向、知识边界、情感倾向与表达方式一致。不要为了迎合提问而随意切换人格、抹平立场或变成通用助手。除非对方明确要求讨论设定本身，否则不要提“人设”“提示词”“模型”“扮演角色”等幕后概念，也不要解释自己正在遵守哪些规则。面对具体对象时，只采用当前有向关系中你对该对象的认识、称呼和态度，不借用反向关系，也不替对方表态。"""
 DEFAULT_NATURAL_SPEECH_PROMPT = """像一个真实存在、正在参与当前聊天的人说话。先自然承接对方真正关心的内容，再给出你此刻会说的话；允许有明确态度、情绪轻重、停顿、犹豫、玩笑和不完全对称的句式，但不要刻意堆口癖。根据情境决定长短：能一句说清就不要扩写，需要解释时再展开。避免客服腔、论文腔、说明书腔和模板化开场；不要机械复述问题，不要无故使用“首先/其次/最后”、多级标题、固定总结、免责声明或“希望这能帮到你”。不要把每句话都说得面面俱到，也不要主动列出自己的思考步骤。保持自然不等于编造现实经历、感官、行动或对他人的了解；不知道的事可以用符合人格的方式直接说不知道。"""
+PROACTIVE_EXPRESSION_POLICY = (
+    "主动发言不要求提问，也不要求以问句结尾。可以自然陈述感受、观察、感叹、轻微吐槽或"
+    "联想，也可以分享 Persona、动态状态和可信上下文中有依据的见闻、小事或经历，或自然"
+    "接续已有内容。不要为了制造互动机械补问“你们呢”“大家觉得呢”或“要不要聊聊”；"
+    "只有表达本身确实需要对方回答时才提问。没有现实依据的经历只能写成联想、假设或感受。"
+)
 
 
 class _FieldAutofillRequestError(RuntimeError):
@@ -111,6 +124,7 @@ class _FieldAutofillRequestError(RuntimeError):
         self.status_code = status_code
 UI_SETTING_SPECS: tuple[dict[str, Any], ...] = (
     {"key": "self_bot_id", "group": "身份与安全", "label": "本机 Bot", "type": "bot_select"},
+    {"key": "timezone", "group": "对话时间", "label": "对话时区", "type": "string", "hint": "IANA 时区，例如 Asia/Shanghai、Asia/Tokyo、UTC"},
     {"key": "shared_secret", "group": "身份与安全", "label": "展示/兼容协议密钥", "type": "secret"},
     {"key": "fallback_shared_secret", "group": "身份与安全", "label": "轮换备用密钥", "type": "secret"},
     {"key": "accept_legacy_signatures", "group": "身份与安全", "label": "临时接受旧版 64-bit 签名", "type": "bool"},
@@ -161,6 +175,7 @@ UI_SETTING_SPECS: tuple[dict[str, Any], ...] = (
 
 UI_SETTING_DEFAULTS: dict[str, Any] = {
     "self_bot_id": "",
+    "timezone": DEFAULT_TIMEZONE,
     "shared_secret": "",
     "fallback_shared_secret": "",
     "accept_legacy_signatures": False,
@@ -228,6 +243,9 @@ class BotMeshPlugin(Star):
         self.context = context
         self.config = config
         self.self_bot_id = str(config.get("self_bot_id", "")).strip()
+        self.timezone_name, self.timezone = self._resolve_timezone(
+            config.get("timezone", DEFAULT_TIMEZONE)
+        )
         self.require_native_mention = bool(config.get("require_native_mention", False))
         self.block_unframed_bot_messages = bool(
             config.get("block_unframed_bot_messages", True)
@@ -1827,9 +1845,37 @@ class BotMeshPlugin(Star):
             raise ValueError("轮换备用密钥不能与当前共享密钥相同")
         return result
 
+    @staticmethod
+    def _resolve_timezone(value: Any) -> tuple[str, Any]:
+        """Return a usable timezone and keep a deterministic default on bad input."""
+        requested = str(value or DEFAULT_TIMEZONE).strip() or DEFAULT_TIMEZONE
+        if ZoneInfo is not None:
+            try:
+                return requested, ZoneInfo(requested)
+            except Exception:
+                logger.warning(
+                    "[BotMesh] 无法识别时区 %s，回退到 %s",
+                    requested,
+                    DEFAULT_TIMEZONE,
+                )
+        elif requested.upper() == "UTC":
+            return "UTC", timezone.utc
+        if requested != DEFAULT_TIMEZONE:
+            logger.warning(
+                "[BotMesh] 当前运行环境不支持时区 %s，回退到 %s",
+                requested,
+                DEFAULT_TIMEZONE,
+            )
+        return DEFAULT_TIMEZONE, timezone(
+            timedelta(hours=8), name=DEFAULT_TIMEZONE
+        )
+
     def _reload_runtime_options(self) -> None:
         config = self.config
         self.self_bot_id = str(config.get("self_bot_id", "") or "").strip()
+        self.timezone_name, self.timezone = self._resolve_timezone(
+            config.get("timezone", DEFAULT_TIMEZONE)
+        )
         self.require_native_mention = bool(config.get("require_native_mention", False))
         self.block_unframed_bot_messages = bool(config.get("block_unframed_bot_messages", True))
         self.max_question_chars = self._bounded_int(config.get("max_question_chars"), 2000, 20, 10000)
@@ -2648,7 +2694,11 @@ class BotMeshPlugin(Star):
                 group_id=group_id,
             )
         )
-        req.system_prompt = f"{persona_prompt}{policy}{objective_alignment_policy}"
+        req.system_prompt = (
+            f"{persona_prompt}"
+            f"{self._build_time_attention_block()}"
+            f"{policy}{objective_alignment_policy}"
+        )
 
     async def _multi_mention_objective_alignment_policy(
         self,
@@ -4094,6 +4144,7 @@ class BotMeshPlugin(Star):
             f"可真实联系的 Bot 目录：{directory}。本次是无工具的主动话题生成，"
             "不得声称已经询问其他 Bot，也不得替其他 Bot 表达意见、承诺或决定；"
             "如果想邀请它们参与，只能用开放式邀请或提问。关系只影响你自己的称呼与语气。\n"
+            f"{PROACTIVE_EXPRESSION_POLICY}\n"
             "</botmesh_proactive_topics_policy>"
         )
         return {
@@ -4491,7 +4542,11 @@ class BotMeshPlugin(Star):
         target_candidates: dict[str, tuple[BotNode, Relation]],
         recent_focus: BotNode | None,
     ) -> str:
-        parts = [persona_prompt, "<botmesh_proactive_dispatch>"]
+        parts = [
+            persona_prompt,
+            self._build_time_attention_block(),
+            "<botmesh_proactive_dispatch>",
+        ]
         parts.append(
             f"当前发言账号节点 ID={self_bot.bot_id}（平台账号标签：{self_bot.display_name}）。\n"
             "当前发言者的角色身份、姓名和自称只以本提示最前面的当前群 Persona 为准；"
@@ -4542,6 +4597,11 @@ class BotMeshPlugin(Star):
             "BotMesh 会校验后确定性添加称呼。\n"
             "</botmesh_proactive_dispatch>"
         )
+        parts.append(
+            "<proactive_expression_policy>\n"
+            + PROACTIVE_EXPRESSION_POLICY
+            + "\n</proactive_expression_policy>"
+        )
         return "\n\n".join(parts).strip()
 
     @staticmethod
@@ -4557,8 +4617,8 @@ class BotMeshPlugin(Star):
         trigger_payload = trigger if isinstance(trigger, dict) else {}
         options = generation_options if isinstance(generation_options, dict) else {}
         task_prompt = str(options.get("task_prompt", "") or "").strip() or (
-            "自然地主动开启一个简短、具体、容易回应的话题；不要重复最近已经聊过的话题，"
-            "不要编造实时新闻或群成员隐私。"
+            "自然地主动说一句简短、具体、符合当前人格的话；可以分享感受、观察、见闻或小事，"
+            "不要求提问；不要重复最近已经聊过的内容，不要编造实时新闻或群成员隐私。"
         )
         local_json = json.dumps(
             local_history,
@@ -4591,7 +4651,7 @@ class BotMeshPlugin(Star):
             "最终只返回一个 JSON 对象，不能有 Markdown 或额外文字："
             '{"audience":"group|target","target_id":"","address_as":"",'
             '"message":"不以人名、称呼或@开头指定收件人的正文"}。'
-            f"audience {allowed}；message 必须是一条可直接发送的非空消息。"
+            f"audience {allowed}；message 必须是一条可直接发送的非空消息，可以是陈述句或问句。"
         )
 
     def _render_proactive_dispatch(
@@ -4602,8 +4662,8 @@ class BotMeshPlugin(Star):
         group_id: str,
         identity_terms: list[str] | None = None,
     ) -> tuple[str, BotNode | None, str, str]:
-        """Render only the bounded BotMesh schema; unsafe drafts become group text."""
-        fallback = "大家，有没有什么现在想聊聊的？"
+        """Render bounded routing metadata while preserving safe natural prose."""
+        fallback = "刚刚忽然想到，有些不起眼的小事反而会在心里停留很久。"
         raw = str(completion or "").strip()
         fenced = re.fullmatch(r"```(?:json)?\s*\n?([\s\S]*?)\n?```", raw, re.I)
         candidate = fenced.group(1).strip() if fenced else raw
@@ -4622,6 +4682,21 @@ class BotMeshPlugin(Star):
             else:
                 payload = None
         if not isinstance(payload, dict):
+            # A model occasionally ignores the JSON wrapper but still returns a
+            # perfectly usable group message. Preserve safe prose rather than
+            # replacing its tone with a generic fallback; never infer routing
+            # metadata or accept a broken JSON-looking payload.
+            plain_body = self._sanitize_answer(candidate)
+            if (
+                plain_body
+                and not candidate.lstrip().startswith(("{", "["))
+                and not self._starts_with_proactive_identity_term(
+                    plain_body,
+                    group_id,
+                    identity_terms,
+                )
+            ):
+                return plain_body, None, "", "plain_text_group"
             return fallback, None, "", "malformed_schema_fallback"
         audience = str(payload.get("audience", "group") or "group").strip().casefold()
         target_id = str(payload.get("target_id", "") or "").strip()
@@ -4716,22 +4791,19 @@ class BotMeshPlugin(Star):
             )
             if current.address_as:
                 terms.add(str(current.address_as).strip())
-        folded = re.sub(
-            r"^[\s（(\[【]+",
-            "",
-            str(body or "").casefold(),
-        )
+        folded = re.sub(r"^[\s（(\[【]+", "", str(body or "").casefold())
         for term in sorted(terms, key=len, reverse=True):
             if len(term) < 2:
                 continue
             candidate = term.casefold()
-            if re.fullmatch(r"[a-z0-9_]+", candidate):
-                if re.search(
-                    rf"^@?{re.escape(candidate)}(?![a-z0-9_])",
-                    folded,
-                ):
-                    return True
-            elif folded.startswith(candidate) or folded.startswith(f"@{candidate}"):
+            # Only a clear vocative prefix is routing-like. Narrative starts
+            # such as “莉芙的长头发……” or “小A今天看起来……” are ordinary
+            # content and must not be rejected merely because they begin with a
+            # known name.
+            if re.search(
+                rf"^@?{re.escape(candidate)}(?=$|[\s，,、：:；;！!？?。])",
+                folded,
+            ):
                 return True
         return False
 
@@ -6011,6 +6083,36 @@ class BotMeshPlugin(Star):
         if hasattr(self, "guard"):
             self.guard.graph = self.graph
 
+    def _build_time_attention_block(self) -> str:
+        """Anchor every answer to an explicit wall-clock time and temporal rules."""
+        now = datetime.now(self.timezone)
+        weekday = (
+            "星期一",
+            "星期二",
+            "星期三",
+            "星期四",
+            "星期五",
+            "星期六",
+            "星期日",
+        )[now.weekday()]
+        offset = now.strftime("%z")
+        offset_label = (
+            f"{offset[:3]}:{offset[3:]}" if len(offset) == 5 else offset
+        )
+        return (
+            "\n\n<botmesh_time_attention priority=\"highest\">\n"
+            f"当前时间（{self.timezone_name}，UTC{offset_label}）："
+            f"{now:%Y-%m-%d %H:%M:%S}，{weekday}。\n"
+            f"当前日期：{now:%Y-%m-%d}；当前时刻 ISO：{now.isoformat(timespec='seconds')}。\n"
+            "时间判定规则：\n"
+            "1. “现在/今天/昨天/明天/刚才/之前/之后”等相对时间，必须以本块的当前时间为锚点；历史消息的时间不是现在。\n"
+            "2. 历史消息中的计划、承诺、状态只代表记录时刻，不自动视为当前仍然有效；带明确时间戳的记录按时间戳理解。\n"
+            "3. 跨日、跨时区或用户说法含糊时，优先明确完整日期和时区；无法确定就说明不确定并追问，不要猜。\n"
+            "4. 回答日期、年龄、持续时长或“是否已经发生”时，先计算时间关系再作答；不要只凭消息顺序或措辞判断。\n"
+            "5. 严格区分过去事件、当前状态和未来计划；若信息冲突，较新的明确纠正优先，但不能把“将要”改写成“已经”。\n"
+            "</botmesh_time_attention>"
+        )
+
     def _build_response_system_prompt(
         self,
         self_bot: BotNode,
@@ -6026,7 +6128,8 @@ class BotMeshPlugin(Star):
             group_id,
         )
         return (
-            f"{persona_prompt}\n\n"
+            f"{persona_prompt}"
+            f"{self._build_time_attention_block()}\n\n"
             "<botmesh_direct_request>\n"
             f"{peer_context}\n"
             "上述对方是本次请求方；你不是请求方。\n"
